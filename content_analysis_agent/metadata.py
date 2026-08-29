@@ -120,7 +120,7 @@ def rows_from_sheet(records: list[dict]) -> list[dict]:
     engagement question can be answered straight from the sheet -- real tags
     against real view counts, with no model in the loop and nothing to join.
     """
-    from .evaluate import parse_tags_from_filename   # lazy: keeps langgraph out
+    from .evaluation import parse_tags_from_filename  # lazy: keeps langgraph out
 
     out = []
     for rec in records:

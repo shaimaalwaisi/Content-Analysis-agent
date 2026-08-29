@@ -92,13 +92,12 @@ load_image -> recall -+-(hit)-------------------------------> END
 | `vlm.py` | Swappable providers behind one `VLMClient` protocol: Anthropic, OpenAI, and an offline mock. |
 | `graph.py` | The LangGraph agent, including the validation step that drops out-of-vocabulary tags. |
 | `pipeline.py` | Batch-tags a folder, tolerating per-image failures so one bad file cannot abort a run. |
-| `evaluate.py` | Multi-label metrics computed with plain set arithmetic. |
+| `evaluation/` | Its own package: `quality.py` scores tagging against labels, `runstats.py` measures agent behaviour. |
 | `memory.py` | Persistent tag memory (SQLite), so identical requests skip the model. |
 | `logconf.py` | Structured JSON-lines logging. |
 | `retry.py` | Exponential backoff for transient provider failures. |
 | `metadata.py` | Joins tags to the metadata sheet and ranks tags by engagement. |
 | `tools.py` | Search tools for the enrich step, mock and Claude web search. |
-| `runstats.py` | Label-free workflow metrics: hallucination, latency, efficiency. |
 | `fewshot.py` | Turns the labelled training images into few-shot demonstrations. |
 
 Because every entry point goes through `build_graph`, the graph is the extension point: inserting a

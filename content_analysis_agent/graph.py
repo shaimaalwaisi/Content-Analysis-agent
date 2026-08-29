@@ -25,7 +25,7 @@ from langgraph.graph import END, StateGraph
 from .logconf import get_logger
 from .memory import TagMemory, make_key
 from .retry import call_with_retry
-from .runstats import RunStats
+from .evaluation.runstats import RunStats
 from .tools import SearchTool, tags_from_evidence
 from .taxonomy import allowed_tags, normalise
 from .vlm import Example, VLMClient, encode_image

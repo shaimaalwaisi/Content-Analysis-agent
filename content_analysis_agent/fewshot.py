@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 
-from .evaluate import load_labelled
+from .evaluation import load_labelled
 from .vlm import Example, encode_image
 
 DEFAULT_TRAIN_DIR = "data/train"

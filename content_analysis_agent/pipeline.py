@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from .graph import _infer_context, build_graph
 from .logconf import get_logger
 from .memory import TagMemory
-from .runstats import RunStats
+from .evaluation.runstats import RunStats
 from .tools import SearchTool
 from .vlm import Example, VLMClient
 

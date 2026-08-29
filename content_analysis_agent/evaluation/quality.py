@@ -17,13 +17,13 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 
-from .graph import _infer_context, build_graph
-from .memory import TagMemory
+from ..graph import _infer_context, build_graph
+from ..memory import TagMemory
 from .runstats import RunStats
-from .tools import SearchTool
-from .taxonomy import normalise
-from .pipeline import find_images
-from .vlm import VLMClient
+from ..tools import SearchTool
+from ..taxonomy import normalise
+from ..pipeline import find_images
+from ..vlm import VLMClient
 
 
 def parse_tags_from_filename(name: str) -> list[str]:
@@ -246,7 +246,7 @@ def evaluate(root: str, client: VLMClient, sample: int | None = None,
     """
     # Local import: fewshot imports this module, so importing it at module
     # level would be circular.
-    from .fewshot import load_examples
+    from ..fewshot import load_examples
 
     data = load_labelled(root)
     if sample:
