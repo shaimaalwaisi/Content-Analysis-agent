@@ -29,6 +29,7 @@ try:
 except Exception:
     pass
 
+from .logconf import setup_logging
 from .memory import DEFAULT_PATH as MEMORY_PATH, TagMemory
 from .pipeline import results_to_dicts, run_folder
 from .taxonomy import allowed_tags, taxonomy_prompt
@@ -56,7 +57,8 @@ def _cmd_tag(args) -> None:
 
     memory = None if args.no_memory else TagMemory(args.memory)
     results = run_folder(args.input, client, limit=args.limit,
-                         on_item=progress, examples=examples, memory=memory)
+                         on_item=progress, examples=examples, memory=memory,
+                         workers=args.workers)
     if memory:
         print(f"\n{memory.summary()}")
     records = results_to_dicts(results)
@@ -127,6 +129,11 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="content_analysis_agent",
         description="Annotate product images with marketing tags.")
+    p.add_argument("--log-level", default="WARNING",
+                   choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+                   help="structured (JSON lines) log verbosity")
+    p.add_argument("--log-file", default=None,
+                   help="write JSON log lines here instead of stderr")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pt = sub.add_parser("taxonomy", help="print the controlled tag vocabulary")
@@ -139,6 +146,8 @@ def main(argv=None) -> int:
     pg.add_argument("--model", default=None, help="override model id")
     pg.add_argument("--limit", type=int, default=None, help="max images")
     pg.add_argument("--output", default=None, help="results .json or .csv")
+    pg.add_argument("--workers", type=int, default=1, metavar="N",
+                    help="tag N images in parallel (network-bound work)")
     pg.add_argument("--few-shot", type=int, default=0, metavar="N",
                     help="prepend N labelled training images as examples")
     pg.add_argument("--train-dir", default="data/train",
@@ -169,6 +178,7 @@ def main(argv=None) -> int:
     pe.set_defaults(func=_cmd_eval)
 
     args = p.parse_args(argv)
+    setup_logging(args.log_level, args.log_file)
     args.func(args)
     return 0
 

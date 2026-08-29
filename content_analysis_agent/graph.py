@@ -17,13 +17,18 @@ without calling the model.
 from __future__ import annotations
 
 import os
+import time
 from typing import Optional, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from .logconf import get_logger
 from .memory import TagMemory, make_key
+from .retry import call_with_retry
 from .taxonomy import allowed_tags, normalise
 from .vlm import Example, VLMClient, encode_image
+
+log = get_logger(__name__)
 
 
 class TagState(TypedDict, total=False):
@@ -59,10 +64,12 @@ def _infer_context(image_path: str) -> str:
     return ", ".join(bits)
 
 
-def build_graph(client: VLMClient, memory: TagMemory | None = None):
+def build_graph(client: VLMClient, memory: TagMemory | None = None,
+                attempts: int = 3):
     """Compile the agent for a given VLM client.
 
     Pass a TagMemory to reuse previously computed tags for identical requests.
+    `attempts` bounds how often a transient provider failure is retried.
     """
     model_id = getattr(client, "model", type(client).__name__)
 
@@ -80,13 +87,24 @@ def build_graph(client: VLMClient, memory: TagMemory | None = None):
                        state.get("examples"))
         hit = memory.get(key)
         if hit is not None:
+            log.info("memory_hit", extra={"image": state["image_path"],
+                                          "n_tags": len(hit)})
             return {"cache_key": key, "cached": True, "tags": hit}
         return {"cache_key": key, "cached": False}
 
     def tag_image(state: TagState) -> TagState:
-        raw = client.predict_tags(
-            state["image_b64"], state["media_type"],
-            context=state.get("context"), examples=state.get("examples"))
+        started = time.perf_counter()
+        raw = call_with_retry(
+            lambda: client.predict_tags(
+                state["image_b64"], state["media_type"],
+                context=state.get("context"),
+                examples=state.get("examples")),
+            attempts=attempts)
+        log.info("model_call", extra={
+            "image": state["image_path"], "model": model_id,
+            "ms": round((time.perf_counter() - started) * 1000),
+            "n_raw_tags": len(raw),
+            "n_examples": len(state.get("examples") or [])})
         return {"raw_tags": raw}
 
     def validate_tags(state: TagState) -> TagState:
@@ -97,6 +115,14 @@ def build_graph(client: VLMClient, memory: TagMemory | None = None):
             if n in vocab and n not in seen:
                 seen.add(n)
                 clean.append(n)
+        dropped = [t for t in state.get("raw_tags", [])
+                   if normalise(t) not in vocab]
+        if dropped:
+            # Out-of-vocabulary predictions are the signal to watch in
+            # production: a rising rate means prompt or taxonomy drift.
+            log.warning("out_of_vocab_tags", extra={
+                "image": state["image_path"], "dropped": dropped,
+                "kept": clean})
         return {"tags": clean}
 
     def remember(state: TagState) -> TagState:

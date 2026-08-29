@@ -22,9 +22,12 @@ except Exception:
     pass
 
 from content_analysis_agent.graph import build_graph  # noqa: E402
+from content_analysis_agent.logconf import setup_logging  # noqa: E402
 from content_analysis_agent.memory import TagMemory  # noqa: E402
 from content_analysis_agent.taxonomy import taxonomy_prompt  # noqa: E402
 from content_analysis_agent.vlm import get_client  # noqa: E402
+
+setup_logging(os.environ.get("LOG_LEVEL", "WARNING"))
 
 st.set_page_config(page_title="Content Analysis Agent", page_icon="🏷️")
 st.title("🏷️ Content Analysis Agent")

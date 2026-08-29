@@ -94,6 +94,8 @@ load_image -> recall -+-(hit)-------------------------------> END
 | `pipeline.py` | Batch-tags a folder, tolerating per-image failures so one bad file cannot abort a run. |
 | `evaluate.py` | Multi-label metrics computed with plain set arithmetic. |
 | `memory.py` | Persistent tag memory (SQLite), so identical requests skip the model. |
+| `logconf.py` | Structured JSON-lines logging. |
+| `retry.py` | Exponential backoff for transient provider failures. |
 | `fewshot.py` | Turns the labelled training images into few-shot demonstrations. |
 
 Because every entry point goes through `build_graph`, the graph is the extension point: inserting a
@@ -157,6 +159,38 @@ Images longer than 1024px on their longest side are downscaled and re-encoded as
 (`vlm.encode_image`). Vision models bill by pixel area rather than file size, so on this dataset the
 resize cuts roughly **51% of image tokens** — about $0.75 to $0.36 per full 107-image run at Sonnet
 input pricing — with no loss of tagging detail at this resolution. Pass `max_dim=0` to send originals.
+
+## Running at scale
+
+**Parallelism.** Tagging is network-bound, so `--workers N` tags N images at once. On this dataset
+that is roughly a 6× wall-clock saving at 8 workers, and output order always matches folder order —
+work is submitted in order and the futures are read in order, so parallelism never reshuffles
+results or progress output.
+
+```bash
+python -m content_analysis_agent.cli tag --input data/test --provider anthropic --workers 8
+```
+
+**Retries.** Transient provider failures (429, 408/409, 5xx, connection and timeout errors) are
+retried with exponential backoff and jitter. Non-transient failures — a malformed request, a bad API
+key — are raised immediately rather than retried, since they fail identically every time. Without
+this, one rate-limit response would silently become an empty tag list for that image.
+
+**Logging.** Diagnostics are emitted as JSON lines, one object per event, ready for `jq` or a log
+shipper. Human progress output stays on stdout.
+
+```bash
+python -m content_analysis_agent.cli --log-level INFO --log-file run.log tag --input data/test
+```
+
+```json
+{"ts": "...", "level": "INFO",    "event": "image_tagged", "image": "...", "n_tags": 2, "ms": 84, "cached": false}
+{"ts": "...", "level": "WARNING", "event": "out_of_vocab_tags", "image": "...", "dropped": ["sparkly"]}
+{"ts": "...", "level": "INFO",    "event": "run_complete", "images": 107, "workers": 8, "seconds": 41.2}
+```
+
+`out_of_vocab_tags` is the metric worth alerting on: the validation step silently drops predictions
+outside the taxonomy, so a rising drop rate is the earliest signal of prompt or taxonomy drift.
 
 ## Tag taxonomy
 

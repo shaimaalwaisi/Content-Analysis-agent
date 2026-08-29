@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 
 from .graph import _infer_context, build_graph
+from .logconf import get_logger
 from .memory import TagMemory
 from .vlm import Example, VLMClient
+
+log = get_logger(__name__)
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
@@ -44,31 +49,63 @@ def _split_context(ctx: str) -> tuple[str, str]:
 def run_folder(root: str, client: VLMClient, limit: int | None = None,
                on_item=None,
                examples: list[Example] | None = None,
-               memory: TagMemory | None = None) -> list[TagResult]:
+               memory: TagMemory | None = None,
+               workers: int = 1) -> list[TagResult]:
     """Tag every image under `root`. `on_item(i, total, result)` is an optional
     progress callback (used by the CLI / Streamlit UI). `examples` are few-shot
     demonstrations prepended to every request (see fewshot.load_examples).
-    `memory` reuses tags already computed for identical requests."""
+    `memory` reuses tags already computed for identical requests. `workers`
+    tags images in parallel -- the work is network-bound, so threads help even
+    though they share one interpreter. Results keep folder order regardless."""
     app = build_graph(client, memory=memory)
     paths = find_images(root)
     if limit:
         paths = paths[:limit]
 
-    results: list[TagResult] = []
-    for i, path in enumerate(paths, 1):
+    def tag_path(path: str) -> TagResult:
         ctx = _infer_context(path)
+        started = time.perf_counter()
         try:
             out = app.invoke({"image_path": path, "context": ctx or None,
                               "examples": examples})
             tags = out.get("tags", [])
         except Exception as exc:  # keep going on a single bad image
             tags = []
+            log.error("image_failed", extra={"image": path,
+                                             "error_type": type(exc).__name__,
+                                             "error": str(exc)[:300]})
             print(f"  ! {os.path.basename(path)}: {exc}")
+        else:
+            log.info("image_tagged", extra={
+                "image": path, "n_tags": len(tags),
+                "ms": round((time.perf_counter() - started) * 1000),
+                "cached": bool(out.get("cached"))})
         category, model = _split_context(ctx)
-        res = TagResult(path=path, category=category, model=model, tags=tags)
-        results.append(res)
-        if on_item:
-            on_item(i, len(paths), res)
+        return TagResult(path=path, category=category, model=model, tags=tags)
+
+    started = time.perf_counter()
+    if workers > 1:
+        # Submit in order and read the futures in order, so parallelism never
+        # reorders the output or the progress callback.
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(tag_path, p) for p in paths]
+            results = []
+            for i, future in enumerate(futures, 1):
+                res = future.result()
+                results.append(res)
+                if on_item:
+                    on_item(i, len(paths), res)
+    else:
+        results = []
+        for i, path in enumerate(paths, 1):
+            res = tag_path(path)
+            results.append(res)
+            if on_item:
+                on_item(i, len(paths), res)
+
+    log.info("run_complete", extra={
+        "images": len(results), "workers": workers,
+        "seconds": round(time.perf_counter() - started, 2)})
     return results
 
 

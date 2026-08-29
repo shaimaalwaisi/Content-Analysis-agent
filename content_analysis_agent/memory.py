@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import threading
 import time
 
 DEFAULT_PATH = ".agent_memory.sqlite3"
@@ -41,6 +42,9 @@ class TagMemory:
         self.path = path
         self.hits = 0
         self.misses = 0
+        # run_folder can tag images in parallel, so every access is guarded:
+        # one sqlite connection shared across threads, plus the counters.
+        self._lock = threading.Lock()
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS tags ("
@@ -51,23 +55,27 @@ class TagMemory:
         self._conn.commit()
 
     def get(self, key: str) -> list[str] | None:
-        row = self._conn.execute(
-            "SELECT tags FROM tags WHERE key = ?", (key,)).fetchone()
-        if row is None:
-            self.misses += 1
-            return None
-        self.hits += 1
-        return json.loads(row[0])
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT tags FROM tags WHERE key = ?", (key,)).fetchone()
+            if row is None:
+                self.misses += 1
+                return None
+            self.hits += 1
+            return json.loads(row[0])
 
     def put(self, key: str, tags: list[str], model: str = "") -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO tags (key, tags, model, created) "
-            "VALUES (?, ?, ?, ?)",
-            (key, json.dumps(tags), model, time.time()))
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO tags (key, tags, model, created) "
+                "VALUES (?, ?, ?, ?)",
+                (key, json.dumps(tags), model, time.time()))
+            self._conn.commit()
 
     def size(self) -> int:
-        return self._conn.execute("SELECT COUNT(*) FROM tags").fetchone()[0]
+        with self._lock:
+            return self._conn.execute(
+                "SELECT COUNT(*) FROM tags").fetchone()[0]
 
     def summary(self) -> str:
         total = self.hits + self.misses
