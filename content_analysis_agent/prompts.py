@@ -1,8 +1,15 @@
-"""All LLM prompts live here, so wording can be tuned in one place.
+"""The textual half of the prompt, so wording can be tuned in one place.
 
-There is currently a single prompt: the image-tagging instruction. It is kept
-as named text blocks plus a small builder that injects the controlled
-vocabulary and the per-image product context.
+There is currently a single instruction: the image-tagging prompt, kept as
+named text blocks plus a small builder that injects the controlled vocabulary
+and the per-image product context.
+
+Note that this is not the *whole* prompt. Few-shot examples are prompt content
+too, but a vision API carries them as alternating user/assistant message turns
+rather than as text, so they are prepared in `fewshot.py` (which loads and
+encodes the example images) and assembled by the clients in `vlm.py`. The split
+keeps this module pure text with one dependency; merging the two would pull
+file I/O and the evaluation module into the prompt layer.
 """
 from __future__ import annotations
 
