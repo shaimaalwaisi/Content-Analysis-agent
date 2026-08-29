@@ -7,9 +7,9 @@ image. Three implementations ship:
 * OpenAIVLM     - alternative, a GPT-4o-class vision model
 * MockVLM       - no network / no key; deterministic, for tests & offline demos
 
-Each returns a raw list[str] of predicted tags. Validation against the
-taxonomy happens later (graph.validate_tags), so a client only extracts
-whatever the model said.
+Prompt wording lives in prompts.py; a client only sends the prompt with the
+image and extracts the model's tag list. Validation against the taxonomy
+happens later (graph.validate_tags).
 """
 from __future__ import annotations
 
@@ -20,26 +20,10 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
-from .taxonomy import taxonomy_prompt
+from .prompts import build_tagging_prompt
 
 # One example (image_b64, media_type, tags) for optional few-shot prompting.
 Example = tuple[str, str, list[str]]
-
-
-def build_instruction(taxonomy_text: str, context: str | None) -> str:
-    ctx = f"\nProduct context: {context}." if context else ""
-    return (
-        "You label product images for a retail marketing team. "
-        "Choose ALL tags from the controlled vocabulary below that apply to "
-        "the image. Tags come in two levels: a General category and its "
-        "Specifics. Include the General category and every Specific you can "
-        "clearly see. Most images have between 1 and 4 tags. Only use tags "
-        "from this vocabulary; never invent new ones."
-        f"{ctx}\n\n"
-        f"Controlled vocabulary:\n{taxonomy_text}\n\n"
-        'Respond with ONLY a JSON array of tag strings, e.g. '
-        '["physical design", "side angle", "top"]. No other text.'
-    )
 
 
 def parse_tag_array(text: str) -> list[str]:
@@ -76,7 +60,7 @@ class AnthropicVLM:
         self._client = Anthropic()
 
     def predict_tags(self, image_b64, media_type, context=None, examples=None):
-        instruction = build_instruction(taxonomy_prompt(), context)
+        instruction = build_tagging_prompt(context)
         messages = []
         for ex_b64, ex_media, ex_tags in examples or []:
             messages.append({"role": "user", "content": [
@@ -107,7 +91,7 @@ class OpenAIVLM:
         self._client = OpenAI()
 
     def predict_tags(self, image_b64, media_type, context=None, examples=None):
-        instruction = build_instruction(taxonomy_prompt(), context)
+        instruction = build_tagging_prompt(context)
         messages = []
         for ex_b64, ex_media, ex_tags in examples or []:
             messages.append({"role": "user", "content": [
