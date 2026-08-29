@@ -29,6 +29,7 @@ try:
 except Exception:
     pass
 
+from .memory import DEFAULT_PATH as MEMORY_PATH, TagMemory
 from .pipeline import results_to_dicts, run_folder
 from .taxonomy import allowed_tags, taxonomy_prompt
 from .vlm import get_client
@@ -53,8 +54,11 @@ def _cmd_tag(args) -> None:
         name = res.path.rsplit("/", 1)[-1]
         print(f"[{i}/{total}] {name} -> {res.tags}")
 
+    memory = None if args.no_memory else TagMemory(args.memory)
     results = run_folder(args.input, client, limit=args.limit,
-                         on_item=progress, examples=examples)
+                         on_item=progress, examples=examples, memory=memory)
+    if memory:
+        print(f"\n{memory.summary()}")
     records = results_to_dicts(results)
 
     if args.output:
@@ -86,10 +90,14 @@ def _cmd_eval(args) -> None:
     if args.few_shot:
         print(f"Using up to {args.few_shot} few-shot example(s) "
               f"(the scored image is always excluded from its own examples)")
+    memory = None if args.no_memory else TagMemory(args.memory)
     metrics, records = evaluate(args.train_dir, client, sample=args.sample,
-                                on_item=progress, few_shot=args.few_shot)
+                                on_item=progress, few_shot=args.few_shot,
+                                memory=memory)
     print("\n" + "=" * 48)
     print(metrics.summary())
+    if memory:
+        print(memory.summary())
     print("=" * 48)
 
     if args.report:
@@ -121,6 +129,10 @@ def main(argv=None) -> int:
                     help="prepend N labelled training images as examples")
     pg.add_argument("--train-dir", default="data/train",
                     help="where --few-shot examples come from")
+    pg.add_argument("--memory", default=MEMORY_PATH,
+                    help="path to the agent's tag memory (SQLite)")
+    pg.add_argument("--no-memory", action="store_true",
+                    help="ignore stored tags and always call the model")
     pg.set_defaults(func=_cmd_tag)
 
     pe = sub.add_parser("eval", help="score the agent against train labels")
@@ -134,6 +146,10 @@ def main(argv=None) -> int:
     pe.add_argument("--few-shot", type=int, default=0, metavar="N",
                     help="prepend up to N labelled examples, excluding the "
                          "image being scored")
+    pe.add_argument("--memory", default=MEMORY_PATH,
+                    help="path to the agent's tag memory (SQLite)")
+    pe.add_argument("--no-memory", action="store_true",
+                    help="ignore stored tags and always call the model")
     pe.set_defaults(func=_cmd_eval)
 
     args = p.parse_args(argv)

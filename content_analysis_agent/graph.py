@@ -2,11 +2,17 @@
 
 Flow (one run per image):
 
-    load_image  ->  tag_image  ->  validate_tags  ->  END
+    load_image -> recall -+-(hit)------------------------> END
+                          |
+                          +-(miss)-> tag_image -> validate_tags -> remember -> END
 
 Each node is a small, testable function. This makes the design easy to read
 and extend (e.g. drop an `enrich` node between tag and validate to look up
 non-visual tags like 'awards'/'benchmark' via web search or MCP).
+
+`recall`/`remember` are the agent's memory: with a TagMemory attached, an image
+already tagged under identical conditions short-circuits straight to END
+without calling the model.
 """
 from __future__ import annotations
 
@@ -15,6 +21,7 @@ from typing import Optional, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from .memory import TagMemory, make_key
 from .taxonomy import allowed_tags, normalise
 from .vlm import Example, VLMClient, encode_image
 
@@ -27,6 +34,8 @@ class TagState(TypedDict, total=False):
     media_type: str
     raw_tags: list[str]             # what the model said
     tags: list[str]                 # validated, in-vocabulary tags
+    cache_key: Optional[str]        # memory fingerprint for this request
+    cached: bool                    # True when tags came from memory
     error: Optional[str]
 
 
@@ -50,14 +59,29 @@ def _infer_context(image_path: str) -> str:
     return ", ".join(bits)
 
 
-def build_graph(client: VLMClient):
-    """Compile the agent for a given VLM client."""
+def build_graph(client: VLMClient, memory: TagMemory | None = None):
+    """Compile the agent for a given VLM client.
+
+    Pass a TagMemory to reuse previously computed tags for identical requests.
+    """
+    model_id = getattr(client, "model", type(client).__name__)
 
     def load_image(state: TagState) -> TagState:
         path = state["image_path"]
         b64, media = encode_image(path)
         ctx = state.get("context") or _infer_context(path) or None
         return {"image_b64": b64, "media_type": media, "context": ctx}
+
+    def recall(state: TagState) -> TagState:
+        """Look the request up in memory before spending a model call."""
+        if memory is None:
+            return {"cached": False}
+        key = make_key(state["image_b64"], model_id, state.get("context"),
+                       state.get("examples"))
+        hit = memory.get(key)
+        if hit is not None:
+            return {"cache_key": key, "cached": True, "tags": hit}
+        return {"cache_key": key, "cached": False}
 
     def tag_image(state: TagState) -> TagState:
         raw = client.predict_tags(
@@ -75,14 +99,27 @@ def build_graph(client: VLMClient):
                 clean.append(n)
         return {"tags": clean}
 
+    def remember(state: TagState) -> TagState:
+        """Store the validated tags so an identical request skips the model."""
+        if memory is not None and state.get("cache_key"):
+            memory.put(state["cache_key"], state.get("tags", []), model_id)
+        return {}
+
     g = StateGraph(TagState)
     g.add_node("load_image", load_image)
+    g.add_node("recall", recall)
     g.add_node("tag_image", tag_image)
     g.add_node("validate_tags", validate_tags)
+    g.add_node("remember", remember)
     g.set_entry_point("load_image")
-    g.add_edge("load_image", "tag_image")
+    g.add_edge("load_image", "recall")
+    # A memory hit already has its tags: route straight to the end.
+    g.add_conditional_edges("recall", lambda s: END if s.get("cached")
+                            else "tag_image", {END: END,
+                                               "tag_image": "tag_image"})
     g.add_edge("tag_image", "validate_tags")
-    g.add_edge("validate_tags", END)
+    g.add_edge("validate_tags", "remember")
+    g.add_edge("remember", END)
     return g.compile()
 
 

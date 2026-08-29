@@ -5,6 +5,7 @@ import os
 from dataclasses import asdict, dataclass
 
 from .graph import _infer_context, build_graph
+from .memory import TagMemory
 from .vlm import Example, VLMClient
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
@@ -42,11 +43,13 @@ def _split_context(ctx: str) -> tuple[str, str]:
 
 def run_folder(root: str, client: VLMClient, limit: int | None = None,
                on_item=None,
-               examples: list[Example] | None = None) -> list[TagResult]:
+               examples: list[Example] | None = None,
+               memory: TagMemory | None = None) -> list[TagResult]:
     """Tag every image under `root`. `on_item(i, total, result)` is an optional
     progress callback (used by the CLI / Streamlit UI). `examples` are few-shot
-    demonstrations prepended to every request (see fewshot.load_examples)."""
-    app = build_graph(client)
+    demonstrations prepended to every request (see fewshot.load_examples).
+    `memory` reuses tags already computed for identical requests."""
+    app = build_graph(client, memory=memory)
     paths = find_images(root)
     if limit:
         paths = paths[:limit]

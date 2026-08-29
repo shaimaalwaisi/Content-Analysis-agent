@@ -15,3 +15,6 @@ data/**/*.webp
 *.pdf
 *.xlsx
 *.xls
+
+# Agent memory (local tag cache)
+*.sqlite3

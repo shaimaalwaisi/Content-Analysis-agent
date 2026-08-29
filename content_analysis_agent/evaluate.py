@@ -17,6 +17,7 @@ import re
 from dataclasses import dataclass
 
 from .graph import _infer_context, build_graph
+from .memory import TagMemory
 from .taxonomy import normalise
 from .pipeline import find_images
 from .vlm import VLMClient
@@ -124,8 +125,8 @@ def compute_metrics(truth: list[list[str]],
 
 
 def evaluate(root: str, client: VLMClient, sample: int | None = None,
-             on_item=None, few_shot: int | None = None
-             ) -> tuple[Metrics, list[dict]]:
+             on_item=None, few_shot: int | None = None,
+             memory: TagMemory | None = None) -> tuple[Metrics, list[dict]]:
     """Run the agent over labelled images and score it. Returns metrics plus a
     per-image record (path, truth, predicted) for inspection.
 
@@ -140,7 +141,7 @@ def evaluate(root: str, client: VLMClient, sample: int | None = None,
     data = load_labelled(root)
     if sample:
         data = data[:sample]
-    app = build_graph(client)
+    app = build_graph(client, memory=memory)
 
     truth, pred, records = [], [], []
     for i, (path, gt) in enumerate(data, 1):

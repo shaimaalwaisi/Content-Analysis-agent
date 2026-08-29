@@ -21,7 +21,8 @@ try:
 except Exception:
     pass
 
-from content_analysis_agent.graph import build_graph, tag_one  # noqa: E402
+from content_analysis_agent.graph import build_graph  # noqa: E402
+from content_analysis_agent.memory import TagMemory  # noqa: E402
 from content_analysis_agent.taxonomy import taxonomy_prompt  # noqa: E402
 from content_analysis_agent.vlm import get_client  # noqa: E402
 
@@ -39,6 +40,10 @@ with st.sidebar:
         "Few-shot examples", 0, 8, 0,
         help="Show the model this many labelled training images before "
              "asking. 0 = zero-shot.")
+    use_memory = st.checkbox(
+        "Reuse remembered tags", value=True,
+        help="Skip the model when this exact image has been tagged before "
+             "under the same settings.")
     with st.expander("Controlled vocabulary"):
         st.text(taxonomy_prompt())
 
@@ -55,23 +60,29 @@ if uploaded is not None:
             tmp_path = tmp.name
         try:
             client = get_client(provider, model or None)
-            app = build_graph(client)
+            memory = TagMemory() if use_memory else None
+            app = build_graph(client, memory=memory)
             examples = None
             if few_shot:
                 from content_analysis_agent.fewshot import load_examples
                 examples = load_examples(limit=few_shot)
             with st.spinner("Tagging..."):
-                tags = tag_one(app, tmp_path, context=context or None,
-                               examples=examples)
+                out = app.invoke({"image_path": tmp_path,
+                                  "context": context or None,
+                                  "examples": examples})
+            tags = out.get("tags", [])
+            from_memory = out.get("cached", False)
         except Exception as exc:
             st.error(f"Tagging failed: {exc}")
-            tags = []
+            tags, from_memory = [], False
         finally:
             os.unlink(tmp_path)
 
         if tags:
             st.success("Predicted tags")
             st.write(" ".join(f"`{t}`" for t in tags))
+            if from_memory:
+                st.caption("Reused from memory - no model call was made.")
         else:
             st.warning("No tags predicted.")
 

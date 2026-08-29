@@ -77,10 +77,12 @@ the model that hint. Choose the `mock` provider to try the interface with no API
 taxonomy.json  ->  prompts  ->  VLM client  ->  graph  ->  pipeline / evaluate  ->  CLI / UI
 ```
 
-The agent itself is three nodes:
+The agent itself is five nodes, with a branch on memory:
 
 ```
-load_image  ->  tag_image  ->  validate_tags  ->  END
+load_image -> recall -+-(hit)-------------------------------> END
+                      |
+                      +-(miss)-> tag_image -> validate_tags -> remember -> END
 ```
 
 | Module | Responsibility |
@@ -91,6 +93,8 @@ load_image  ->  tag_image  ->  validate_tags  ->  END
 | `graph.py` | The LangGraph agent, including the validation step that drops out-of-vocabulary tags. |
 | `pipeline.py` | Batch-tags a folder, tolerating per-image failures so one bad file cannot abort a run. |
 | `evaluate.py` | Multi-label metrics computed with plain set arithmetic. |
+| `memory.py` | Persistent tag memory (SQLite), so identical requests skip the model. |
+| `fewshot.py` | Turns the labelled training images into few-shot demonstrations. |
 
 Because every entry point goes through `build_graph`, the graph is the extension point: inserting a
 node between `tag_image` and `validate_tags` — say, an enrichment step that looks up non-visual tags
@@ -124,6 +128,28 @@ Note that all 8 labelled images are of a single phone and are tagged almost enti
 `physical design`, so they teach angle vocabulary well and say nothing about `feature graphics`,
 `usage scene`, or the other categories. Examples are not free either: each one is re-sent with every
 request, so `--few-shot 8` multiplies image tokens per call by nine.
+
+## Memory
+
+The agent remembers what it has already decided. Before calling the model, the `recall` node looks
+the request up in a small SQLite store; on a hit it routes straight to the end and no model call is
+made. After a successful tagging run, `remember` writes the result back.
+
+Entries are keyed by a hash of everything that could change the answer — the image bytes, the model
+id, the product context, and the few-shot examples — so switching provider, editing the context, or
+changing `--few-shot` all correctly miss rather than returning a stale answer.
+
+```bash
+# Second run over the same folder reuses everything and calls no model
+python -m content_analysis_agent.cli tag --input data/test --provider anthropic
+# Memory: 107 hit(s), 0 miss(es) (100% reused), 107 entries in .agent_memory.sqlite3
+
+python -m content_analysis_agent.cli tag --input data/test --no-memory   # force fresh calls
+python -m content_analysis_agent.cli tag --input data/test --memory /tmp/other.sqlite3
+```
+
+Memory is on by default and stored in `.agent_memory.sqlite3` (gitignored). The Streamlit sidebar has
+a matching **Reuse remembered tags** checkbox, and the UI says when a result came from memory.
 
 ## Image downscaling
 
