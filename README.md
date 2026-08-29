@@ -349,6 +349,32 @@ which is why `--enrich` is opt-in.
   Model and tool calls are timed separately so enrichment's cost is attributable.
 - **Efficiency** is what the run actually cost: cache hit rate, retries, and failures per image.
 
+## Tests
+
+```bash
+pip install pytest
+pytest
+```
+
+133 tests, about 1.5 seconds, **no network and no API key** — every test uses a stub or the mock
+client, so the suite never spends money and never fails because a provider is down. Fixtures
+synthesise their own images rather than reading `data/`, which is gitignored, so a fresh clone can
+run them immediately.
+
+They pin the invariants that are easy to break silently:
+
+| Area | What is guarded |
+| --- | --- |
+| `test_graph.py` | Out-of-vocabulary tags are dropped; a cache hit skips the model; enrichment cannot inject a tag; a search outage keeps the model's tags |
+| `test_evaluation.py` | Metrics against hand-computed values; the few-shot leakage guard; a failed run warns instead of reporting zeros |
+| `test_memory_and_retry.py` | The cache key changes with model, context, examples and enrichment; concurrent writes are not lost; client errors are never retried |
+| `test_vlm.py` | Media type comes from the bytes, not the extension; downscaling; robust response parsing |
+| `test_analysis_and_tools.py` | The real sheet's headers map correctly; lift arithmetic; evidence keywords match on word boundaries |
+| `test_pipeline_and_cli.py` | One bad image cannot abort a run; `--workers` preserves order; every subcommand is registered |
+
+The suite was mutation-checked: breaking the leakage guard, the vocabulary filter, or the media-type
+sniffing each makes a specific test fail, so these are not vacuous assertions.
+
 ## Tag taxonomy
 
 43 tags across 12 general categories, including `physical design` (front / side / back / multiple

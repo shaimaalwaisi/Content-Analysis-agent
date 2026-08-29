@@ -1,0 +1,160 @@
+"""The agent itself: validation, memory routing, enrichment, instrumentation."""
+import pytest
+
+from content_analysis_agent.graph import _infer_context, build_graph, tag_one
+from content_analysis_agent.memory import TagMemory
+from content_analysis_agent.tools_types import SearchResult
+from evaluation.runstats import RunStats
+
+
+class FakeSearch:
+    def __init__(self, results=None, boom=False):
+        self.results = results or []
+        self.boom = boom
+        self.calls = 0
+
+    def search(self, query):
+        self.calls += 1
+        if self.boom:
+            raise RuntimeError("search is down")
+        return self.results
+
+
+AWARD_EVIDENCE = [SearchResult("r", "Winner of the EISA award for best TV.")]
+
+
+class TestInferContext:
+    def test_reads_category_and_model_from_the_path(self):
+        ctx = _infer_context("data/test/TV/XR-65A95K/img.jpg")
+        assert "Category: TV" in ctx and "Model: XR-65A95K" in ctx
+
+    def test_handles_a_category_with_spaces(self):
+        ctx = _infer_context("data/test/Video & Sound/WH-CH520/img.jpg")
+        assert "Category: Video & Sound" in ctx
+
+    def test_returns_empty_for_an_unknown_layout(self):
+        # An upload lands in a temp file, so there is nothing to infer.
+        assert _infer_context("/tmp/tmpabc123.jpg") == ""
+
+
+class TestValidation:
+    def test_drops_tags_outside_the_vocabulary(self, jpeg, stub):
+        stub.tags = ["physical design", "sparkly unicorn", "front angle"]
+        assert tag_one(build_graph(stub), jpeg) == ["physical design",
+                                                    "front angle"]
+
+    def test_deduplicates(self, jpeg, stub):
+        stub.tags = ["physical design", "physical design"]
+        assert tag_one(build_graph(stub), jpeg) == ["physical design"]
+
+    def test_normalises_before_matching(self, jpeg, stub):
+        stub.tags = ["Physical  Design", "FRONT ANGLE"]
+        assert tag_one(build_graph(stub), jpeg) == ["physical design",
+                                                    "front angle"]
+
+    def test_a_wholly_invalid_answer_yields_no_tags(self, jpeg, stub):
+        stub.tags = ["feature graphics: camera"]     # a real failure mode
+        assert tag_one(build_graph(stub), jpeg) == []
+
+
+class TestMemoryRouting:
+    def test_second_identical_request_skips_the_model(self, jpeg, stub, tmp_path):
+        mem = TagMemory(str(tmp_path / "m.sqlite3"))
+        app = build_graph(stub, memory=mem)
+        first = tag_one(app, jpeg)
+        second = tag_one(app, jpeg)
+        assert first == second
+        assert stub.calls == 1, "a cache hit must not call the model"
+        mem.close()
+
+    def test_different_context_is_a_different_entry(self, jpeg, stub, tmp_path):
+        mem = TagMemory(str(tmp_path / "m.sqlite3"))
+        app = build_graph(stub, memory=mem)
+        tag_one(app, jpeg, context="Category: TV")
+        tag_one(app, jpeg, context="Category: Mobile")
+        assert stub.calls == 2
+        mem.close()
+
+    def test_memory_stores_validated_tags_not_raw(self, jpeg, stub, tmp_path):
+        stub.tags = ["physical design", "sparkly unicorn"]
+        mem = TagMemory(str(tmp_path / "m.sqlite3"))
+        app = build_graph(stub, memory=mem)
+        assert tag_one(app, jpeg) == tag_one(app, jpeg) == ["physical design"]
+        mem.close()
+
+    def test_without_memory_every_call_reaches_the_model(self, jpeg, stub):
+        app = build_graph(stub)
+        tag_one(app, jpeg)
+        tag_one(app, jpeg)
+        assert stub.calls == 2
+
+
+class TestEnrichment:
+    def test_adds_non_visual_tags_the_image_cannot_show(self, jpeg, stub):
+        app = build_graph(stub, search_tool=FakeSearch(AWARD_EVIDENCE))
+        assert "awards" in tag_one(app, jpeg, context="Category: TV")
+
+    def test_cannot_inject_a_tag_outside_the_vocabulary(self, jpeg, stub):
+        # Whatever a tool returns, validate_tags still decides.
+        rogue = [SearchResult("r", "sparkly unicorn award winner")]
+        tags = tag_one(build_graph(stub, search_tool=FakeSearch(rogue)),
+                       jpeg, context="Category: TV")
+        assert "sparkly unicorn" not in tags
+
+    def test_a_search_outage_keeps_the_model_tags(self, jpeg, stub):
+        app = build_graph(stub, search_tool=FakeSearch(boom=True))
+        assert tag_one(app, jpeg, context="Category: TV") == [
+            "physical design", "front angle"]
+
+    def test_no_context_means_no_search(self, jpeg, stub):
+        tool = FakeSearch(AWARD_EVIDENCE)
+        tag_one(build_graph(stub, search_tool=tool), jpeg, context="")
+        assert tool.calls == 0, "there is nothing to look up without a product"
+
+    def test_enriched_and_plain_results_cache_separately(self, jpeg, stub, tmp_path):
+        mem = TagMemory(str(tmp_path / "m.sqlite3"))
+        plain = build_graph(stub, memory=mem)
+        enriched = build_graph(stub, memory=mem,
+                               search_tool=FakeSearch(AWARD_EVIDENCE))
+        a = tag_one(plain, jpeg, context="Category: TV")
+        b = tag_one(enriched, jpeg, context="Category: TV")
+        assert "awards" not in a and "awards" in b
+        assert tag_one(plain, jpeg, context="Category: TV") == a
+        mem.close()
+
+
+class TestInstrumentation:
+    def test_counts_model_calls_and_hallucinations(self, jpeg, stub):
+        stub.tags = ["physical design", "sparkly", "unicorn mode"]
+        stats = RunStats()
+        stats.record_image()
+        tag_one(build_graph(stub, stats=stats), jpeg)
+        assert stats.model_calls == 1
+        assert stats.raw_tags == 3 and stats.dropped_tags == 2
+        assert stats.hallucination_rate == pytest.approx(2 / 3)
+
+    def test_clean_answers_have_no_hallucination(self, jpeg, stub):
+        stats = RunStats()
+        stats.record_image()
+        tag_one(build_graph(stub, stats=stats), jpeg)
+        assert stats.hallucination_rate == 0.0
+
+    def test_a_cache_hit_is_counted_and_does_not_dilute_the_rate(
+            self, jpeg, stub, tmp_path):
+        stub.tags = ["physical design", "sparkly"]
+        mem = TagMemory(str(tmp_path / "m.sqlite3"))
+        stats = RunStats()
+        app = build_graph(stub, memory=mem, stats=stats)
+        stats.record_image()
+        tag_one(app, jpeg)
+        stats.record_image()
+        tag_one(app, jpeg)
+        assert stats.cache_hits == 1
+        # One model answer, one bad tag out of two proposed.
+        assert stats.hallucination_rate == pytest.approx(0.5)
+        mem.close()
+
+    def test_examples_reach_the_client(self, jpeg, stub):
+        examples = [("b64", "image/jpeg", ["physical design"])]
+        tag_one(build_graph(stub), jpeg, examples=examples)
+        assert stub.seen_examples[0] == examples
