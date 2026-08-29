@@ -105,11 +105,26 @@ such as `awards` or `benchmark` — reaches the CLI, the pipeline, evaluation, a
 
 ### Providers
 
-| `--provider` | Model | Notes |
+| `--provider` | Default model | Key |
 | --- | --- | --- |
-| `anthropic` | `claude-sonnet-5` | Default. Needs `ANTHROPIC_API_KEY`. |
-| `openai` | `gpt-4o` | Needs `OPENAI_API_KEY`. |
-| `mock` | — | No network, no key. Returns a fixed guess per category; useful for wiring and demos, **not** for measuring accuracy. |
+| `anthropic` | `claude-sonnet-5` | `ANTHROPIC_API_KEY` |
+| `openai` | `gpt-4o` | `OPENAI_API_KEY` |
+| `xai` | `grok-2-vision-1212` | `XAI_API_KEY` |
+| `groq` | `llama-4-scout` | `GROQ_API_KEY` |
+| `ollama` | `llama3.2-vision` | none — local server |
+| `mock` | — | none. Deterministic, offline; for wiring and demos only, **never** for measuring accuracy |
+
+Everything below `anthropic` speaks the OpenAI wire format, so one client class covers them all —
+they differ only by base URL, key variable, and default model. That makes a free or local model a
+one-flag experiment:
+
+```bash
+python -m content_analysis_agent.cli eval --train-dir data/train --provider groq --few-shot 4
+```
+
+Model ids move quickly on these services; pass `--model` if a default has been retired. Because the
+memory cache key includes the model id, switching providers never returns another model's tags, and
+the baseline table in `eval` shows immediately whether a cheaper model still clears the floor.
 
 SDK imports are lazy, so the mock path runs without either provider package installed.
 

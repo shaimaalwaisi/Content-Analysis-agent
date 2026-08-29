@@ -33,7 +33,7 @@ from .logconf import setup_logging
 from .memory import DEFAULT_PATH as MEMORY_PATH, TagMemory
 from .pipeline import results_to_dicts, run_folder
 from .taxonomy import allowed_tags, taxonomy_prompt
-from .vlm import get_client
+from .vlm import PROVIDERS, get_client
 
 
 def _cmd_taxonomy(_args) -> None:
@@ -203,7 +203,7 @@ def main(argv=None) -> int:
     pg = sub.add_parser("tag", help="tag a folder of images")
     pg.add_argument("--input", required=True, help="folder of images (recursive)")
     pg.add_argument("--provider", default="anthropic",
-                    choices=["anthropic", "openai", "mock"])
+                    choices=PROVIDERS)
     pg.add_argument("--model", default=None, help="override model id")
     pg.add_argument("--limit", type=int, default=None, help="max images")
     pg.add_argument("--output", default=None, help="results .json or .csv")
@@ -222,7 +222,7 @@ def main(argv=None) -> int:
     pe = sub.add_parser("eval", help="score the agent against train labels")
     pe.add_argument("--train-dir", required=True, help="labelled train folder")
     pe.add_argument("--provider", default="anthropic",
-                    choices=["anthropic", "openai", "mock"])
+                    choices=PROVIDERS)
     pe.add_argument("--model", default=None, help="override model id")
     pe.add_argument("--sample", type=int, default=None,
                     help="evaluate only the first N labelled images")
@@ -258,7 +258,7 @@ def main(argv=None) -> int:
     pi.add_argument("--min-support", type=int, default=2,
                     help="ignore tags on fewer than N images")
     pi.add_argument("--provider", default="anthropic",
-                    choices=["anthropic", "openai", "mock"])
+                    choices=PROVIDERS)
     pi.add_argument("--model", default=None)
     pi.add_argument("--limit", type=int, default=None)
     pi.add_argument("--workers", type=int, default=1)

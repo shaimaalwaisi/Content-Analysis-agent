@@ -25,7 +25,7 @@ from content_analysis_agent.graph import build_graph  # noqa: E402
 from content_analysis_agent.logconf import setup_logging  # noqa: E402
 from content_analysis_agent.memory import TagMemory  # noqa: E402
 from content_analysis_agent.taxonomy import taxonomy_prompt  # noqa: E402
-from content_analysis_agent.vlm import get_client  # noqa: E402
+from content_analysis_agent.vlm import PROVIDERS, get_client  # noqa: E402
 
 setup_logging(os.environ.get("LOG_LEVEL", "WARNING"))
 
@@ -35,7 +35,7 @@ st.caption("Annotate retail product images with marketing tags. Sony AI task MVP
 
 with st.sidebar:
     st.header("Settings")
-    provider = st.selectbox("Provider", ["anthropic", "openai", "mock"], index=0)
+    provider = st.selectbox("Provider", PROVIDERS, index=0)
     model = st.text_input("Model (optional)", value="")
     context = st.text_input("Product context (optional)",
                             placeholder="Category: Mobile, Model: XPERIA10MK5")

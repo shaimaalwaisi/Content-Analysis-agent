@@ -4,7 +4,9 @@ A thin, swappable interface so the agent does not care which provider tags the
 image. Three implementations ship:
 
 * AnthropicVLM  - default, Claude vision (claude-sonnet-5 by default)
-* OpenAIVLM     - alternative, a GPT-4o-class vision model
+* OpenAIVLM     - any OpenAI-compatible vision endpoint: OpenAI itself, and
+                  equally xAI (Grok), Groq, or a local Ollama, which all speak
+                  the same wire format and differ only by base URL and key
 * MockVLM       - no network / no key; deterministic, for tests & offline demos
 
 Prompt wording lives in prompts.py; a client only sends the prompt with the
@@ -82,14 +84,27 @@ class AnthropicVLM:
 
 @dataclass
 class OpenAIVLM:
-    """GPT-4o-class vision. Requires OPENAI_API_KEY and `pip install openai`."""
+    """Any OpenAI-compatible vision endpoint. Requires `pip install openai`.
+
+    `base_url` and `api_key_env` are all that separate the providers: leave
+    them unset for OpenAI itself, or point them at xAI, Groq, or a local
+    server. The request body is identical in every case.
+    """
 
     model: str = "gpt-4o"
     max_tokens: int = 300
+    base_url: str | None = None
+    api_key_env: str = "OPENAI_API_KEY"
+    api_key_fallback: str | None = None   # local servers accept any string
 
     def __post_init__(self) -> None:
         from openai import OpenAI
-        self._client = OpenAI()
+        key = os.getenv(self.api_key_env) or self.api_key_fallback
+        if not key:
+            raise RuntimeError(
+                f"{self.api_key_env} is not set. Export it, or add it to a "
+                f".env file in the repo root.")
+        self._client = OpenAI(api_key=key, base_url=self.base_url)
 
     def predict_tags(self, image_b64, media_type, context=None, examples=None):
         instruction = build_tagging_prompt(context)
@@ -126,15 +141,39 @@ class MockVLM:
         return ["physical design"]
 
 
+# Endpoints that speak the OpenAI wire format. Only the URL, the key variable
+# and the default model differ -- the request body is identical, which is why
+# one client class covers all of them. Model ids move quickly on these
+# services; override with --model if a default has been retired.
+OPENAI_COMPATIBLE = {
+    "openai": {"base_url": None, "key_env": "OPENAI_API_KEY",
+               "model": "gpt-4o"},
+    "xai": {"base_url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY",
+            "model": "grok-2-vision-1212"},
+    "groq": {"base_url": "https://api.groq.com/openai/v1",
+             "key_env": "GROQ_API_KEY",
+             "model": "meta-llama/llama-4-scout-17b-16e-instruct"},
+    "ollama": {"base_url": "http://localhost:11434/v1",
+               "key_env": "OLLAMA_API_KEY", "model": "llama3.2-vision",
+               "key_fallback": "ollama"},
+}
+
+PROVIDERS = ["anthropic", *OPENAI_COMPATIBLE, "mock"]
+
+
 def get_client(provider: str, model: str | None = None) -> VLMClient:
     provider = provider.lower()
     if provider == "anthropic":
         return AnthropicVLM(model=model or "claude-sonnet-5")
-    if provider == "openai":
-        return OpenAIVLM(model=model or "gpt-4o")
+    if provider in OPENAI_COMPATIBLE:
+        cfg = OPENAI_COMPATIBLE[provider]
+        return OpenAIVLM(model=model or cfg["model"],
+                         base_url=cfg["base_url"], api_key_env=cfg["key_env"],
+                         api_key_fallback=cfg.get("key_fallback"))
     if provider == "mock":
         return MockVLM()
-    raise ValueError(f"Unknown provider: {provider!r}")
+    raise ValueError(f"Unknown provider: {provider!r}. "
+                     f"Choose one of: {', '.join(PROVIDERS)}")
 
 
 # Product shots carry far more pixels than a tagging model needs, and the
