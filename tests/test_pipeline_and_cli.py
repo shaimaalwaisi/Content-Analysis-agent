@@ -118,3 +118,59 @@ class TestCLIParser:
 def _minimal_args(cmd):
     return {"taxonomy": [], "tag": ["--input", "x"],
             "eval": ["--train-dir", "x"], "insights": ["--from-sheet"]}[cmd]
+
+
+class TestRunRecords:
+    """Every run leaves a JSON record behind in results/."""
+
+    def _args(self, tmp_path, **overrides):
+        parser = build_parser()
+        args = parser.parse_args(["tag", "--input", "x"])
+        args.results_dir = str(tmp_path / "results")
+        for key, value in overrides.items():
+            setattr(args, key, value)
+        return args
+
+    def test_writes_one_file_per_run(self, tmp_path):
+        from cli.runlog import write_run
+        path = write_run("tag", self._args(tmp_path), {"images": 3})
+        assert path and path.endswith("_tag.json")
+        assert json.load(open(path))["images"] == 3
+
+    def test_record_carries_command_time_and_settings(self, tmp_path):
+        from cli.runlog import write_run
+        record = json.load(open(write_run("tag", self._args(tmp_path), {})))
+        assert record["command"] == "tag"
+        assert record["started_at"]
+        assert record["settings"]["provider"] == "anthropic"
+
+    def test_no_results_disables_it(self, tmp_path):
+        from cli.runlog import write_run
+        args = self._args(tmp_path, no_results=True)
+        assert write_run("tag", args, {}) is None
+
+    def test_an_unwritable_directory_does_not_kill_the_run(self, tmp_path):
+        # A run that produced good tags must not fail at the last step.
+        from cli.runlog import write_run
+        blocker = tmp_path / "blocked"
+        blocker.write_text("i am a file, not a directory")
+        args = self._args(tmp_path)
+        args.results_dir = str(blocker)
+        assert write_run("tag", args, {}) is None
+
+    def test_latest_finds_the_newest_record(self, tmp_path):
+        from cli.runlog import latest, write_run
+        args = self._args(tmp_path)
+        write_run("eval", args, {"n": 1})
+        newest = write_run("eval", args, {"n": 2})
+        assert latest("eval", results_dir=str(tmp_path / "results")) == newest
+
+    def test_latest_is_none_when_nothing_has_run(self, tmp_path):
+        from cli.runlog import latest
+        assert latest("eval", results_dir=str(tmp_path / "empty")) is None
+
+    def test_from_sheet_records_no_provider(self, tmp_path):
+        # Nothing calls a model in that mode; naming one would mislead.
+        from cli.runlog import settings_of
+        args = build_parser().parse_args(["insights", "--from-sheet"])
+        assert "provider" not in settings_of(args)

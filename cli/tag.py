@@ -9,6 +9,7 @@ from agent.vlm import get_client
 
 from .common import (add_enrich_args, add_memory_args, add_provider_args,
                      build_memory, build_search_tool)
+from .runlog import write_run
 
 
 def _write(records: list[dict], path: str) -> None:
@@ -23,6 +24,15 @@ def _write(records: list[dict], path: str) -> None:
     else:
         with open(path, "w") as f:
             json.dump(records, f, indent=2)
+
+
+def _tag_counts(records: list[dict]) -> dict:
+    """How often each tag was predicted -- the quickest read on a run."""
+    counts: dict[str, int] = {}
+    for record in records:
+        for tag in record["tags"]:
+            counts[tag] = counts.get(tag, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: -kv[1]))
 
 
 def run(args) -> None:
@@ -50,6 +60,16 @@ def run(args) -> None:
         print(memory.summary())
 
     records = results_to_dicts(results)
+
+    run_path = write_run("tag", args, {
+        "images": len(records),
+        "workflow": stats.as_dict(),
+        "tag_counts": _tag_counts(records),
+        "results": records,
+    })
+    if run_path:
+        print(f"Run record: {run_path}")
+
     if args.output:
         _write(records, args.output)
         print(f"\nWrote {len(records)} results to {args.output}")

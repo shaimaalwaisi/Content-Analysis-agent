@@ -7,6 +7,7 @@ from agent.pipeline import results_to_dicts, run_folder
 from agent.vlm import get_client
 
 from .common import add_memory_args, add_provider_args, build_memory
+from .runlog import write_run
 
 
 def _numeric(value) -> float | None:
@@ -72,12 +73,19 @@ def run(args) -> None:
     print(f"\nWhich tags earn attention (ranked by lift on '{args.metric}')")
     print(format_engagement(report, args.metric, overall))
 
+    payload = {"metric": args.metric, "overall_mean": overall,
+               "synthetic": bool(args.synthetic),
+               "rows_analysed": len(joined),
+               "rows_with_metric": len(values),
+               "tags": report}
+
+    run_path = write_run("insights", args, payload)
+    if run_path:
+        print(f"\nRun record: {run_path}")
     if args.output:
         with open(args.output, "w") as f:
-            json.dump({"metric": args.metric, "overall_mean": overall,
-                       "synthetic": bool(args.synthetic),
-                       "matched": len(joined), "tags": report}, f, indent=2)
-        print(f"\nWrote report to {args.output}")
+            json.dump(payload, f, indent=2)
+        print(f"Report also written to {args.output}")
 
 
 def add_parser(sub) -> None:

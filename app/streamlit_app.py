@@ -103,15 +103,18 @@ def _scores_tab() -> None:
     add a progress UI without adding information. This just renders the JSON
     the CLI already produces.
     """
+    from cli.runlog import latest
     from evaluation import TARGET_EXACT_MATCH, TARGET_MICRO_F1
 
-    path = st.text_input("Report file", value="metrics.json",
-                         help="Written by: python -m cli eval --report FILE")
+    # Every `cli eval` run drops a record in results/; show the newest.
+    default = latest("eval") or "metrics.json"
+    path = st.text_input("Report file", value=default,
+                         help="Every `python -m cli eval` run writes one of "
+                              "these into results/")
     if not os.path.exists(path):
         st.info(f"No report at `{path}` yet. Generate one with:")
         st.code("python -m cli eval --train-dir data/train "
-                "--provider anthropic --few-shot 8 --report metrics.json",
-                language="bash")
+                "--provider anthropic --few-shot 8", language="bash")
         return
 
     try:

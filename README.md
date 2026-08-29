@@ -32,6 +32,10 @@ streamlit run app/streamlit_app.py
 | `eval --train-dir DIR` | Score against the labels in the training filenames, versus baselines |
 | `insights --from-sheet` | Rank tags by engagement using the metadata sheet |
 
+Every run writes a timestamped JSON record to `results/` — the settings used, what came back, and
+what it cost — so a run survives the terminal scrolling away. `--results-dir` moves them,
+`--no-results` turns them off, and the app's Scores tab opens the newest `eval` record by default.
+
 Useful flags: `--provider` (`anthropic`, `openai`, `xai`, `groq`, `ollama`, `mock`), `--few-shot N`,
 `--workers N`, `--enrich` (look products up for non-visual tags), `--no-memory`, `--report FILE`.
 
@@ -46,7 +50,8 @@ Claude Haiku 4.5 on the 8 labelled images:
 | **`--few-shot 8`** | **0.875** | **0.812** | **0.625** |
 
 Few-shot is what matters: zero-shot loses to a baseline that ignores the image entirely. Eight
-labelled images is a small sample — directional, not a benchmark.
+labelled images is a small sample and the model is not deterministic, so repeat runs land around
+0.85–0.88 — directional, not a benchmark.
 
 From the metadata sheet, tags on images that earn views (n=44): `awards` 1.68×, `product summary`
 1.67×, `person` 1.47× the average, against `connectivity` 0.52×. Social proof and orienting shots

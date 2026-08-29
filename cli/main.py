@@ -30,6 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="structured (JSON lines) log verbosity")
     p.add_argument("--log-file", default=None,
                    help="write JSON log lines here instead of stderr")
+    p.add_argument("--results-dir", default="results",
+                   help="where each run's JSON record is written")
+    p.add_argument("--no-results", action="store_true",
+                   help="do not write a run record")
     sub = p.add_subparsers(dest="cmd", required=True)
     for command in COMMANDS:
         command.add_parser(sub)

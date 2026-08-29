@@ -7,6 +7,7 @@ from agent.vlm import get_client
 
 from .common import (add_enrich_args, add_memory_args, add_provider_args,
                      build_memory, build_search_tool)
+from .runlog import write_run
 
 
 def run(args) -> None:
@@ -55,8 +56,7 @@ def run(args) -> None:
         if warning:
             print("\n(Scores above are unreliable - see the failure warning.)")
 
-    if args.report:
-        payload = {
+    payload = {
             "metrics": {k: v for k, v in vars(metrics).items()
                         if k != "per_tag"},
             "workflow": stats.as_dict(),
@@ -64,11 +64,16 @@ def run(args) -> None:
             "baselines": {name: {k: v for k, v in vars(m).items()
                                  if k != "per_tag"}
                           for name, m in scored.items() if name != "agent"},
-            "records": records,
-        }
+        "records": records,
+    }
+
+    run_path = write_run("eval", args, payload)
+    if run_path:
+        print(f"\nRun record: {run_path}")
+    if args.report:
         with open(args.report, "w") as f:
             json.dump(payload, f, indent=2)
-        print(f"\nFull report written to {args.report}")
+        print(f"Full report also written to {args.report}")
 
 
 def add_parser(sub) -> None:
