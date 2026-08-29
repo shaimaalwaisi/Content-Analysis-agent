@@ -97,6 +97,8 @@ load_image -> recall -+-(hit)-------------------------------> END
 | `logconf.py` | Structured JSON-lines logging. |
 | `retry.py` | Exponential backoff for transient provider failures. |
 | `metadata.py` | Joins tags to the metadata sheet and ranks tags by engagement. |
+| `tools.py` | Search tools for the enrich step, mock and Claude web search. |
+| `runstats.py` | Label-free workflow metrics: hallucination, latency, efficiency. |
 | `fewshot.py` | Turns the labelled training images into few-shot demonstrations. |
 
 Because every entry point goes through `build_graph`, the graph is the extension point: inserting a
@@ -261,6 +263,58 @@ resolve, as do variants like `File Name`, `image_filename` and `views_30d`; `.xl
 load. `--results results.json` reuses an earlier tagging run instead of paying for it twice, and
 `--synthetic PATH` writes a same-shape stand-in sheet for offline demos — output from a synthetic
 sheet is labelled as such and is not a finding about real products.
+
+## Tools: enriching non-visual tags
+
+Some tags are not visual. No photo reveals whether a model won an `award`, appeared in a
+`benchmark`, or carries an `energy rating` — that knowledge is outside the image. `--enrich` adds an
+`enrich` node that looks the product up:
+
+```
+load_image → recall ─(hit)──────────────────────────────────────────► END
+                    └(miss)─► tag_image → enrich → validate_tags → remember → END
+```
+
+```bash
+python -m content_analysis_agent.cli tag --input data/test --enrich --search-tool mock
+python -m content_analysis_agent.cli tag --input data/test --enrich --search-tool anthropic
+```
+
+Two backends sit behind one protocol, mirroring `vlm.py`: `mock` is deterministic and offline;
+`anthropic` uses Claude's **server-side** `web_search` tool, so the search runs on Anthropic's
+infrastructure with no second API key and no client-side tool loop.
+
+Three properties make this safe to add:
+
+- **A tool can only suggest.** Enrichment appends candidates to `raw_tags`; `validate_tags` still
+  decides. Nothing outside the controlled vocabulary can reach the output, whatever a search returns.
+- **A search outage is non-fatal.** Enrichment is additive, so a failed lookup logs and returns the
+  tags the model already produced rather than losing them.
+- **Enriched results are cached separately.** The memory key includes whether enrichment ran, so a
+  plain run's cache is never served for an enriched request.
+
+## Agent workflow metrics
+
+The scores in `eval` measure *tagging quality* against ground-truth labels, so they only run on the
+8 labelled images. These measure how the agent *behaves*, need no labels, and therefore work on the
+107 unlabelled test images — and in production, where labels never exist. Printed by both `tag` and
+`eval`:
+
+```
+Agent workflow metrics (no labels required)
+  Hallucination   : 0.000 (0/10 proposed tags out of vocabulary)
+                    0.000 of answered images proposed at least one
+  Latency (model) : p50 732 ms | p95 16848 ms | 3 call(s)
+  Latency (tool)  : p50 0 ms | p95 0 ms | 3 call(s)
+  Efficiency      : cache hit 0.000 | 0 retr(ies) | 0 failure(s) (0.000)
+```
+
+- **Hallucination** is the share of proposed tags falling outside the vocabulary. `validate_tags`
+  drops them silently, so without this the failure is invisible. It needs no ground truth, which
+  makes it the one quality signal available on live traffic — and the right thing to alert on.
+- **Latency** is reported as p50/p95 rather than a mean, since tail latency is what a user notices.
+  Model and tool calls are timed separately so enrichment's cost is attributable.
+- **Efficiency** is what the run actually cost: cache hit rate, retries, and failures per image.
 
 ## Tag taxonomy
 

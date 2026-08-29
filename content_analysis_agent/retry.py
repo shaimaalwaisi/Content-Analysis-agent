@@ -38,7 +38,8 @@ def is_transient(exc: BaseException) -> bool:
 
 
 def call_with_retry(fn, attempts: int = 3, base_delay: float = 1.0,
-                    max_delay: float = 30.0, sleep=time.sleep):
+                    max_delay: float = 30.0, sleep=time.sleep,
+                    on_retry=None):
     """Call `fn()`, retrying transient failures with exponential backoff.
 
     Raises the last exception once attempts are exhausted, or immediately for
@@ -52,6 +53,8 @@ def call_with_retry(fn, attempts: int = 3, base_delay: float = 1.0,
             last = exc
             if not is_transient(exc) or attempt == attempts:
                 raise
+            if on_retry:
+                on_retry(exc)
             delay = min(base_delay * 2 ** (attempt - 1), max_delay)
             delay += random.uniform(0, delay * 0.1)   # jitter
             log.warning("retrying_after_transient_error", extra={

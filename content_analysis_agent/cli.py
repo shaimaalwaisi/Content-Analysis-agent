@@ -30,6 +30,8 @@ except Exception:
     pass
 
 from .logconf import setup_logging
+from .runstats import RunStats
+from .tools import get_search_tool
 from .memory import DEFAULT_PATH as MEMORY_PATH, TagMemory
 from .pipeline import results_to_dicts, run_folder
 from .taxonomy import allowed_tags, taxonomy_prompt
@@ -56,11 +58,14 @@ def _cmd_tag(args) -> None:
         print(f"[{i}/{total}] {name} -> {res.tags}")
 
     memory = None if args.no_memory else TagMemory(args.memory)
+    stats = RunStats()
+    tool = get_search_tool(args.search_tool) if args.enrich else None
     results = run_folder(args.input, client, limit=args.limit,
                          on_item=progress, examples=examples, memory=memory,
-                         workers=args.workers)
+                         workers=args.workers, search_tool=tool, stats=stats)
+    print(f"\n{stats.summary()}")
     if memory:
-        print(f"\n{memory.summary()}")
+        print(memory.summary())
     records = results_to_dicts(results)
 
     if args.output:
@@ -95,9 +100,11 @@ def _cmd_eval(args) -> None:
         print(f"Using up to {args.few_shot} few-shot example(s) "
               f"(the scored image is always excluded from its own examples)")
     memory = None if args.no_memory else TagMemory(args.memory)
+    stats = RunStats()
+    tool = get_search_tool(args.search_tool) if args.enrich else None
     metrics, records = evaluate(args.train_dir, client, sample=args.sample,
                                 on_item=progress, few_shot=args.few_shot,
-                                memory=memory)
+                                memory=memory, search_tool=tool, stats=stats)
     warning = failure_warning(records)
     if warning:
         print(warning)
@@ -106,6 +113,7 @@ def _cmd_eval(args) -> None:
     if memory:
         print(memory.summary())
     print("=" * 48)
+    print("\n" + stats.summary())
 
     scored = {}
     if not args.no_baseline:
@@ -120,6 +128,7 @@ def _cmd_eval(args) -> None:
     if args.report:
         payload = {"metrics": {k: v for k, v in vars(metrics).items()
                                if k != "per_tag"},
+                   "workflow": stats.as_dict(),
                    "per_tag": metrics.per_tag,
                    "baselines": {name: {k: v for k, v in vars(m).items()
                                         if k != "per_tag"}
@@ -223,6 +232,12 @@ def main(argv=None) -> int:
                     help="path to the agent's tag memory (SQLite)")
     pg.add_argument("--no-memory", action="store_true",
                     help="ignore stored tags and always call the model")
+    pg.add_argument("--enrich", action="store_true",
+                    help="look the product up to justify non-visual tags "
+                         "(awards, benchmark, energy rating)")
+    pg.add_argument("--search-tool", default="mock",
+                    choices=["mock", "anthropic"],
+                    help="search backend for --enrich")
     pg.set_defaults(func=_cmd_tag)
 
     pe = sub.add_parser("eval", help="score the agent against train labels")
@@ -242,6 +257,12 @@ def main(argv=None) -> int:
                     help="path to the agent's tag memory (SQLite)")
     pe.add_argument("--no-memory", action="store_true",
                     help="ignore stored tags and always call the model")
+    pe.add_argument("--enrich", action="store_true",
+                    help="look the product up to justify non-visual tags "
+                         "(awards, benchmark, energy rating)")
+    pe.add_argument("--search-tool", default="mock",
+                    choices=["mock", "anthropic"],
+                    help="search backend for --enrich")
     pe.set_defaults(func=_cmd_eval)
 
     pi = sub.add_parser("insights",

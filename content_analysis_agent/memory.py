@@ -23,8 +23,13 @@ DEFAULT_PATH = ".agent_memory.sqlite3"
 
 
 def make_key(image_b64: str, model: str, context: str | None,
-             examples=None) -> str:
-    """Fingerprint every input that can change the predicted tags."""
+             examples=None, extra: str = "") -> str:
+    """Fingerprint every input that can change the predicted tags.
+
+    `extra` carries anything else that alters the answer -- currently whether
+    the enrich step ran, since an enriched result must never be served from a
+    cache populated by a plain run.
+    """
     h = hashlib.sha256()
     h.update(image_b64.encode())
     h.update(b"\x00" + (model or "").encode())
@@ -32,6 +37,8 @@ def make_key(image_b64: str, model: str, context: str | None,
     for ex_b64, _media, ex_tags in examples or []:
         h.update(b"\x00" + hashlib.sha256(ex_b64.encode()).digest())
         h.update(b"\x00" + json.dumps(sorted(ex_tags)).encode())
+    if extra:
+        h.update(b"\x00" + extra.encode())
     return h.hexdigest()
 
 

@@ -19,6 +19,8 @@ from dataclasses import dataclass
 
 from .graph import _infer_context, build_graph
 from .memory import TagMemory
+from .runstats import RunStats
+from .tools import SearchTool
 from .taxonomy import normalise
 from .pipeline import find_images
 from .vlm import VLMClient
@@ -232,7 +234,9 @@ def format_comparison(scored: dict[str, Metrics]) -> str:
 
 def evaluate(root: str, client: VLMClient, sample: int | None = None,
              on_item=None, few_shot: int | None = None,
-             memory: TagMemory | None = None) -> tuple[Metrics, list[dict]]:
+             memory: TagMemory | None = None,
+             search_tool: SearchTool | None = None,
+             stats: RunStats | None = None) -> tuple[Metrics, list[dict]]:
     """Run the agent over labelled images and score it. Returns metrics plus a
     per-image record (path, truth, predicted) for inspection.
 
@@ -247,11 +251,14 @@ def evaluate(root: str, client: VLMClient, sample: int | None = None,
     data = load_labelled(root)
     if sample:
         data = data[:sample]
-    app = build_graph(client, memory=memory)
+    app = build_graph(client, memory=memory, search_tool=search_tool,
+                      stats=stats)
 
     truth, pred, records = [], [], []
     for i, (path, gt) in enumerate(data, 1):
         ctx = _infer_context(path)
+        if stats:
+            stats.record_image()
         examples = (load_examples(root, limit=few_shot, exclude=path)
                     if few_shot else None)
         try:
@@ -261,6 +268,8 @@ def evaluate(root: str, client: VLMClient, sample: int | None = None,
             error = None
         except Exception as exc:
             got, error = [], f"{type(exc).__name__}: {exc}"
+            if stats:
+                stats.record_failure()
             print(f"  ! {os.path.basename(path)}: {exc}")
         truth.append(gt)
         pred.append(got)

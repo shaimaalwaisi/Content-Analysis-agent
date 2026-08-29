@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass
 from .graph import _infer_context, build_graph
 from .logconf import get_logger
 from .memory import TagMemory
+from .runstats import RunStats
+from .tools import SearchTool
 from .vlm import Example, VLMClient
 
 log = get_logger(__name__)
@@ -50,14 +52,16 @@ def run_folder(root: str, client: VLMClient, limit: int | None = None,
                on_item=None,
                examples: list[Example] | None = None,
                memory: TagMemory | None = None,
-               workers: int = 1) -> list[TagResult]:
+               workers: int = 1, search_tool: SearchTool | None = None,
+               stats: RunStats | None = None) -> list[TagResult]:
     """Tag every image under `root`. `on_item(i, total, result)` is an optional
     progress callback (used by the CLI / Streamlit UI). `examples` are few-shot
     demonstrations prepended to every request (see fewshot.load_examples).
     `memory` reuses tags already computed for identical requests. `workers`
     tags images in parallel -- the work is network-bound, so threads help even
     though they share one interpreter. Results keep folder order regardless."""
-    app = build_graph(client, memory=memory)
+    app = build_graph(client, memory=memory, search_tool=search_tool,
+                      stats=stats)
     paths = find_images(root)
     if limit:
         paths = paths[:limit]
@@ -65,12 +69,16 @@ def run_folder(root: str, client: VLMClient, limit: int | None = None,
     def tag_path(path: str) -> TagResult:
         ctx = _infer_context(path)
         started = time.perf_counter()
+        if stats:
+            stats.record_image()
         try:
             out = app.invoke({"image_path": path, "context": ctx or None,
                               "examples": examples})
             tags = out.get("tags", [])
         except Exception as exc:  # keep going on a single bad image
             tags = []
+            if stats:
+                stats.record_failure()
             log.error("image_failed", extra={"image": path,
                                              "error_type": type(exc).__name__,
                                              "error": str(exc)[:300]})
