@@ -30,7 +30,6 @@ except Exception:
     pass
 
 from .logconf import setup_logging
-from .tools import get_search_tool
 from .memory import DEFAULT_PATH as MEMORY_PATH, TagMemory
 from .pipeline import results_to_dicts, run_folder
 from .taxonomy import allowed_tags, taxonomy_prompt
@@ -45,6 +44,7 @@ def _cmd_taxonomy(_args) -> None:
 
 def _cmd_tag(args) -> None:
     from evaluation.runstats import RunStats
+    from tools import get_search_tool
 
     client = get_client(args.provider, args.model)
 
@@ -90,6 +90,7 @@ def _cmd_eval(args) -> None:
     from evaluation import (compare_baselines, evaluate, failure_warning,
                             format_comparison)
     from evaluation.runstats import RunStats
+    from tools import get_search_tool
 
     client = get_client(args.provider, args.model)
 

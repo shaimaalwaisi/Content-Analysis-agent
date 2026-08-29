@@ -14,13 +14,16 @@ from __future__ import annotations
 import os
 from collections import Counter
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from content_analysis_agent.graph import _infer_context, build_graph
 from content_analysis_agent.memory import TagMemory
 from .runstats import RunStats
-from content_analysis_agent.tools import SearchTool
 from content_analysis_agent.labels import load_labelled
 from content_analysis_agent.vlm import VLMClient
+
+if TYPE_CHECKING:
+    from tools import SearchTool
 
 
 # --------------------------- success criteria -------------------------------
@@ -207,7 +210,7 @@ def format_comparison(scored: dict[str, Metrics]) -> str:
 def evaluate(root: str, client: VLMClient, sample: int | None = None,
              on_item=None, few_shot: int | None = None,
              memory: TagMemory | None = None,
-             search_tool: SearchTool | None = None,
+             search_tool: "SearchTool | None" = None,
              stats: RunStats | None = None) -> tuple[Metrics, list[dict]]:
     """Run the agent over labelled images and score it. Returns metrics plus a
     per-image record (path, truth, predicted) for inspection.

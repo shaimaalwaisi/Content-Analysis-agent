@@ -97,20 +97,28 @@ load_image -> recall -+-(hit)-------------------------------> END
 | `logconf.py` | Structured JSON-lines logging. |
 | `retry.py` | Exponential backoff for transient provider failures. |
 | `metadata.py` | Joins tags to the metadata sheet and ranks tags by engagement. |
-| `tools.py` | Search tools for the enrich step, mock and Claude web search. |
+| `evidence.py` | Which non-visual tags a piece of search evidence supports. |
 | `fewshot.py` | Turns the labelled training images into few-shot demonstrations. |
 
-Evaluation lives outside the package, in a top-level `evaluation/` folder alongside `app/`:
-`quality.py` scores tagging against labels, `runstats.py` measures agent behaviour. Dependencies
-point inward — `evaluation` imports `content_analysis_agent`, never the reverse. `graph` and
-`pipeline` accept a `RunStats` under `TYPE_CHECKING` only, so the core has no runtime dependency on
-the layer that measures it and imports cleanly on its own.
+Two layers live outside the package, alongside `app/`:
 
 ```
 content_analysis_agent/   the agent and everything it needs to produce tags
-evaluation/               measures the agent: quality.py, runstats.py
+tools/                    capabilities it can call: search.py
+evaluation/               measures it: quality.py, runstats.py
 app/                      Streamlit UI
 ```
+
+**Dependencies point inward.** `tools` and `evaluation` both import
+`content_analysis_agent`; it imports neither of them at runtime. Where the core needs their types —
+`SearchTool` in `graph`, `RunStats` in `pipeline` — the import sits under `TYPE_CHECKING` and the
+annotation is a string, so the agent package imports cleanly with both folders absent. Concrete
+tools and collectors are passed in as arguments, and the CLI decides which.
+
+Two things stayed in the core deliberately. `evidence.py` maps search results to tags: that is a
+statement about the taxonomy, not about searching, and keeping it inside means `graph` can turn
+evidence into tags without importing `tools`. `labels.py` parses the tags encoded in training
+filenames, which `fewshot` needs as much as `evaluation` does.
 
 Because every entry point goes through `build_graph`, the graph is the extension point: inserting a
 node between `tag_image` and `validate_tags` — say, an enrichment step that looks up non-visual tags

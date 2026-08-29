@@ -25,13 +25,13 @@ from langgraph.graph import END, StateGraph
 from .logconf import get_logger
 from .memory import TagMemory, make_key
 from .retry import call_with_retry
-from .tools import SearchTool, tags_from_evidence
+from .evidence import tags_from_evidence
 from .taxonomy import allowed_tags, normalise
 from .vlm import Example, VLMClient, encode_image
 
-if TYPE_CHECKING:            # imported for typing only: the core
-    from evaluation.runstats import RunStats   # must not depend on
-                                               # the evaluation layer
+if TYPE_CHECKING:            # typing only: the core must not depend at
+    from evaluation.runstats import RunStats   # runtime on the layers that
+    from tools import SearchTool               # measure it or extend it
 
 log = get_logger(__name__)
 
@@ -72,7 +72,7 @@ def _infer_context(image_path: str) -> str:
 
 
 def build_graph(client: VLMClient, memory: TagMemory | None = None,
-                attempts: int = 3, search_tool: SearchTool | None = None,
+                attempts: int = 3, search_tool: "SearchTool | None" = None,
                 stats: "RunStats | None" = None):
     """Compile the agent for a given VLM client.
 

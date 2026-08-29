@@ -10,12 +10,11 @@ from typing import TYPE_CHECKING
 from .graph import _infer_context, build_graph
 from .logconf import get_logger
 from .memory import TagMemory
-from .tools import SearchTool
 from .vlm import Example, VLMClient
 
-if TYPE_CHECKING:            # imported for typing only: the core
-    from evaluation.runstats import RunStats   # must not depend on
-                                               # the evaluation layer
+if TYPE_CHECKING:            # typing only: the core must not depend at
+    from evaluation.runstats import RunStats   # runtime on the layers that
+    from tools import SearchTool               # measure it or extend it
 
 log = get_logger(__name__)
 
@@ -56,7 +55,7 @@ def run_folder(root: str, client: VLMClient, limit: int | None = None,
                on_item=None,
                examples: list[Example] | None = None,
                memory: TagMemory | None = None,
-               workers: int = 1, search_tool: SearchTool | None = None,
+               workers: int = 1, search_tool: "SearchTool | None" = None,
                stats: "RunStats | None" = None) -> list[TagResult]:
     """Tag every image under `root`. `on_item(i, total, result)` is an optional
     progress callback (used by the CLI / Streamlit UI). `examples` are few-shot
