@@ -78,7 +78,8 @@ def _cmd_tag(args) -> None:
 
 
 def _cmd_eval(args) -> None:
-    from .evaluate import evaluate  # local import: mock path needs no key
+    # local imports: the mock path needs no key
+    from .evaluate import compare_baselines, evaluate, format_comparison
 
     client = get_client(args.provider, args.model)
 
@@ -100,10 +101,23 @@ def _cmd_eval(args) -> None:
         print(memory.summary())
     print("=" * 48)
 
+    scored = {}
+    if not args.no_baseline:
+        truth = [r["truth"] for r in records]
+        pred = [r["predicted"] for r in records]
+        scored = compare_baselines(truth, pred)
+        print("\nAgent vs model-free baselines")
+        print(format_comparison(scored))
+
     if args.report:
         payload = {"metrics": {k: v for k, v in vars(metrics).items()
                                if k != "per_tag"},
-                   "per_tag": metrics.per_tag, "records": records}
+                   "per_tag": metrics.per_tag,
+                   "baselines": {name: {k: v for k, v in vars(m).items()
+                                        if k != "per_tag"}
+                                 for name, m in scored.items()
+                                 if name != "agent"},
+                   "records": records}
         with open(args.report, "w") as f:
             json.dump(payload, f, indent=2)
         print(f"\nFull report written to {args.report}")
@@ -143,6 +157,8 @@ def main(argv=None) -> int:
     pe.add_argument("--sample", type=int, default=None,
                     help="evaluate only the first N labelled images")
     pe.add_argument("--report", default=None, help="write full report JSON")
+    pe.add_argument("--no-baseline", action="store_true",
+                    help="skip the agent-vs-baseline comparison table")
     pe.add_argument("--few-shot", type=int, default=0, metavar="N",
                     help="prepend up to N labelled examples, excluding the "
                          "image being scored")

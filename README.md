@@ -189,6 +189,33 @@ empty dataset.
 and per-tag support. Metrics are computed by hand rather than via scikit-learn, to keep the
 definitions explicit and the dependency list small.
 
+### What counts as success
+
+Defined up front so a score can be judged rather than merely reported:
+
+1. **Beat the model-free baselines.** An agent that cannot outscore "always guess the most common
+   tags" is adding nothing.
+2. **Micro-F1 ≥ 0.75.** Tags feed a human review queue, so pooled per-tag correctness matters more
+   than getting whole sets exactly right.
+3. **Exact-match ≥ 0.40** — roughly four in ten suggestions accepted untouched.
+
+Every `eval` run prints the comparison automatically (`--no-baseline` to skip it):
+
+```
+                                                    micro-F1   Jaccard   exact
+agent                                                  0.615     0.469   0.000
+constant (physical design)                             0.516     0.354   0.000
+prior top-3 (physical design, side angle, camera)      0.638     0.469   0.000
+
+Beats best baseline : NO (0.615 vs 0.638)
+```
+
+That example is the **mock** provider, and it is instructive: the mock loses to a baseline that
+ignores the image entirely. On this dataset the floor is unusually high because `physical design`
+appears in all 8 labels, so a constant guess already scores 0.516. Both baselines are derived from
+the ground-truth labels themselves, which makes them an *optimistic* floor — they start out knowing
+the tag distribution the agent has to infer from pixels.
+
 ## Requirements
 
 Python 3.11. Five direct dependencies: `langgraph`, `anthropic`, `openai`, `streamlit`, and

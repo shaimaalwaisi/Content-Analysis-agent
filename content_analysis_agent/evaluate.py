@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 from .graph import _infer_context, build_graph
@@ -46,6 +47,53 @@ def load_labelled(root: str) -> list[tuple[str, list[str]]]:
         if tags:
             out.append((path, tags))
     return out
+
+
+# --------------------------- success criteria -------------------------------
+
+# What "good" means, chosen up front so a score can be judged rather than just
+# reported. These are targets for the MVP, not measurements.
+#
+#   1. Beat the label-prior baselines below. A model that cannot outscore
+#      "always guess the most common tags" is adding nothing, and on this
+#      dataset that floor is high: 'physical design' appears in every label.
+#   2. Micro-F1 >= 0.75. Tags feed a human review queue, so pooled per-tag
+#      correctness matters more than getting whole sets exactly right.
+#   3. Exact-match >= 0.40, i.e. a reviewer can accept about four in ten
+#      suggestions untouched.
+TARGET_MICRO_F1 = 0.75
+TARGET_EXACT_MATCH = 0.40
+
+
+# --------------------------- baselines --------------------------------------
+
+def most_common_tags(truth: list[list[str]], k: int) -> list[str]:
+    """The k tags that appear most often across the ground-truth labels."""
+    counts = Counter(t for tags in truth for t in tags)
+    return [t for t, _ in counts.most_common(k)]
+
+
+def median_label_size(truth: list[list[str]]) -> int:
+    sizes = sorted(len(t) for t in truth)
+    return sizes[len(sizes) // 2] if sizes else 0
+
+
+def baseline_predictions(truth: list[list[str]]) -> dict[str, list[list[str]]]:
+    """Model-free predictions to compare the agent against.
+
+    Both are derived from the ground-truth labels themselves, so they are an
+    optimistic floor -- they already know the tag distribution the agent has to
+    infer from pixels. Beating them is the minimum bar, not a success.
+    """
+    n = len(truth)
+    if not n:
+        return {}
+    top1 = most_common_tags(truth, 1)
+    topk = most_common_tags(truth, median_label_size(truth))
+    return {
+        f"constant ({', '.join(top1)})": [list(top1)] * n,
+        f"prior top-{len(topk)} ({', '.join(topk)})": [list(topk)] * n,
+    }
 
 
 # --------------------------- metrics ---------------------------------------
@@ -122,6 +170,37 @@ def compute_metrics(truth: list[list[str]],
         macro_precision=macro_p, macro_recall=macro_r, macro_f1=_f1(macro_p, macro_r),
         jaccard=jaccard, exact_match=exact, per_tag=per_tag,
     )
+
+
+def compare_baselines(truth: list[list[str]],
+                      pred: list[list[str]]) -> dict[str, Metrics]:
+    """Score the agent alongside each model-free baseline."""
+    out = {"agent": compute_metrics(truth, pred)}
+    for name, guess in baseline_predictions(truth).items():
+        out[name] = compute_metrics(truth, guess)
+    return out
+
+
+def format_comparison(scored: dict[str, Metrics]) -> str:
+    """Render the agent-vs-baseline table, with an explicit verdict."""
+    width = max(len(n) for n in scored)
+    lines = [f"{'':<{width}}   micro-F1   Jaccard   exact",
+             "-" * (width + 30)]
+    for name, m in scored.items():
+        lines.append(f"{name:<{width}}   {m.micro_f1:>8.3f}   "
+                     f"{m.jaccard:>7.3f}   {m.exact_match:>5.3f}")
+    agent = scored["agent"]
+    best = max((m.micro_f1 for n, m in scored.items() if n != "agent"),
+               default=0.0)
+    lines.append("")
+    lines.append(f"Beats best baseline : "
+                 f"{'YES' if agent.micro_f1 > best else 'NO'} "
+                 f"({agent.micro_f1:.3f} vs {best:.3f})")
+    lines.append(f"Micro-F1 >= {TARGET_MICRO_F1:.2f}     : "
+                 f"{'YES' if agent.micro_f1 >= TARGET_MICRO_F1 else 'NO'}")
+    lines.append(f"Exact-match >= {TARGET_EXACT_MATCH:.2f}  : "
+                 f"{'YES' if agent.exact_match >= TARGET_EXACT_MATCH else 'NO'}")
+    return "\n".join(lines)
 
 
 def evaluate(root: str, client: VLMClient, sample: int | None = None,
