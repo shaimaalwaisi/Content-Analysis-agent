@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+results.json
+metrics.json
+.DS_Store
+
+# Dataset: keep the folder structure (.gitkeep) but don't commit the images
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.png
+data/**/*.webp
