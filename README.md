@@ -197,36 +197,49 @@ outside the taxonomy, so a rising drop rate is the earliest signal of prompt or 
 
 Tagging answers *what is in this image*. The brief opens with a different question — marketing wants
 to know "what content is popular and engaging" — and supplies `meta_data.xslx` with file names,
-product names, categories, prices and **image views**. The `insights` command joins the two and
-ranks tags by how much attention their images get.
+categories, models, prices and **image views**. The `insights` command answers it.
 
 ```bash
-python -m content_analysis_agent.cli insights --input data/test --provider anthropic \
-    --metadata data/meta_data.xlsx --workers 8 --output insights.json
-
-# Reuse an earlier tagging run instead of paying for it twice
-python -m content_analysis_agent.cli insights --results results.json --metadata data/meta_data.xlsx
+# Rank tags by engagement using the sheet's own labelled file names
+python -m content_analysis_agent.cli insights --from-sheet --metadata data/meta_data.xlsx --min-support 3
 ```
 
 ```
-tag              images  mean views      lift
-product summary      48         2,676.9   1.08x
-side angle           19         2,521.8   1.02x
-front angle          40         2,213.9   0.89x
+tag               images  mean views      lift
+awards                 4        48,000.0   1.68x
+product summary        3        47,666.7   1.67x
+person                 3        42,000.0   1.47x
+front angle            7        37,285.7   1.30x
+...
+connectivity           3        15,000.0   0.52x
+
+Overall mean views: 28,590.9
 ```
 
-**Lift** is the tag's mean metric divided by the overall mean: above 1.0 means images carrying that
-tag out-perform the average. `--min-support N` hides tags too rare to read anything into, and
-`--metric` ranks by any numeric column in the sheet (`price`, say, instead of `views`).
+**Lift** is the tag's mean metric over the overall mean: above 1.0 means images carrying that tag
+out-perform average. On the supplied data, social proof (`awards`, `person`) and orienting shots
+(`product summary`, `front angle`) draw roughly 1.3–1.7× the average, while spec-detail imagery
+(`connectivity`, `controls`, `application`) draws about half. `--min-support N` hides tags too rare
+to read anything into, and `--metric` ranks by any numeric column (`price` instead of `views`).
 
-Column headers are matched fuzzily by keyword, so `File Name`, `image_filename`, `Image Views` and
-`views_30d` all resolve; `.xlsx` and `.csv` both load. The join is on image file name, and the
-command reports how many tagged images found a metadata row.
+### Reading the supplied sheet honestly
 
-The sheet ships with the task data rather than this repo. If you do not have it to hand,
-`--synthetic PATH` writes a stand-in with the same shape so the join can be demonstrated offline —
-the brief permits synthetic data for extras. Output from a synthetic sheet is labelled as such: it
-exercises the pipeline and is **not** a finding about real products.
+Three properties of `meta_data.xslx` shape what can be concluded from it:
+
+- It describes the **labelled training images only** — every one of its 151 rows has a bracketed,
+  tag-encoded name. It contains **no rows for the test images**, so tagging the test set and joining
+  it to views matches nothing. `insights --input ...` reports that plainly rather than printing an
+  empty table.
+- **Views are present for only 44 of 151 rows**, covering three products (one per category). Every
+  figure above rests on those 44.
+- **File names repeat across products** — they are tag lists, not unique ids — so the join key is
+  (category, model, file name), not the name alone.
+
+Column headers are matched fuzzily, so the supplied `Name` / `Image views` / `Product price` all
+resolve, as do variants like `File Name`, `image_filename` and `views_30d`; `.xlsx` and `.csv` both
+load. `--results results.json` reuses an earlier tagging run instead of paying for it twice, and
+`--synthetic PATH` writes a same-shape stand-in sheet for offline demos — output from a synthetic
+sheet is labelled as such and is not a finding about real products.
 
 ## Tag taxonomy
 

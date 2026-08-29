@@ -19,14 +19,19 @@ from .logconf import get_logger
 
 log = get_logger(__name__)
 
-# Keyword -> canonical field. First header containing the keyword wins.
-_COLUMN_HINTS = {
-    "file": "file", "image name": "file", "filename": "file",
-    "view": "views", "impression": "views",
-    "price": "price",
-    "categor": "category",
-    "product": "product", "model": "product",
-}
+# (keyword, canonical field), most specific first. Order matters: "Product
+# price" must resolve to price rather than product, and a bare "Name" column --
+# which is what the supplied sheet actually uses for the file name -- must only
+# fall through to `file` after "product name" has had its chance.
+_COLUMN_HINTS = [
+    ("price", "price"),
+    ("view", "views"), ("impression", "views"),
+    ("categor", "category"),
+    ("filename", "file"), ("file name", "file"), ("file", "file"),
+    ("image name", "file"),
+    ("product name", "product"), ("model", "product"), ("product", "product"),
+    ("name", "file"),
+]
 
 
 def _canonical(headers: list[str]) -> dict[str, str]:
@@ -34,7 +39,7 @@ def _canonical(headers: list[str]) -> dict[str, str]:
     out: dict[str, str] = {}
     for header in headers:
         low = str(header).strip().lower()
-        for hint, field in _COLUMN_HINTS.items():
+        for hint, field in _COLUMN_HINTS:
             if hint in low and field not in out.values():
                 out[header] = field
                 break
@@ -71,16 +76,32 @@ def load_metadata(path: str) -> list[dict]:
     return records
 
 
+def _key(category, product, file) -> tuple:
+    return (str(category or "").strip().lower(),
+            str(product or "").strip().lower(), str(file or "").strip())
+
+
 def join_tags(results: list[dict], metadata: list[dict]) -> list[dict]:
-    """Attach metadata to tagged results, matching on image file name.
+    """Attach metadata to tagged results.
+
+    Matches on (category, model, file name) where the result carries them,
+    falling back to file name alone. The supplied sheet repeats the same file
+    name across products -- the labelled training names are tag lists, not
+    unique ids -- so file name on its own is not a key.
 
     `results` are the dicts produced by pipeline.results_to_dicts.
     Images with no metadata row are dropped and reported by the caller.
     """
-    by_name = {r["file"]: r for r in metadata}
+    by_key = {_key(r.get("category"), r.get("product"), r["file"]): r
+              for r in metadata}
+    by_name: dict[str, dict] = {}
+    for r in metadata:
+        by_name.setdefault(r["file"], r)
     joined = []
     for res in results:
-        meta = by_name.get(os.path.basename(res["path"]))
+        name = os.path.basename(res["path"])
+        meta = (by_key.get(_key(res.get("category"), res.get("model"), name))
+                or by_name.get(name))
         if meta is None:
             continue
         row = dict(res)
@@ -89,6 +110,30 @@ def join_tags(results: list[dict], metadata: list[dict]) -> list[dict]:
     log.info("metadata_joined", extra={"tagged": len(results),
                                        "matched": len(joined)})
     return joined
+
+
+def rows_from_sheet(records: list[dict]) -> list[dict]:
+    """Use the sheet's own labelled file names as the tags.
+
+    The supplied sheet documents the *training* images, whose names encode
+    their tags, and carries no rows for the unlabelled test images. So the
+    engagement question can be answered straight from the sheet -- real tags
+    against real view counts, with no model in the loop and nothing to join.
+    """
+    from .evaluate import parse_tags_from_filename   # lazy: keeps langgraph out
+
+    out = []
+    for rec in records:
+        tags = parse_tags_from_filename(rec["file"])
+        if not tags:
+            continue
+        row = dict(rec)
+        row["tags"] = tags
+        row["path"] = rec["file"]
+        out.append(row)
+    log.info("rows_from_sheet", extra={"rows": len(records),
+                                       "labelled": len(out)})
+    return out
 
 
 def _to_number(value) -> float | None:

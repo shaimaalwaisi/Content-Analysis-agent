@@ -127,9 +127,12 @@ def _cmd_eval(args) -> None:
 
 def _cmd_insights(args) -> None:
     from .metadata import (format_engagement, join_tags, load_metadata,
-                           tag_engagement, write_synthetic_metadata)
+                           rows_from_sheet, tag_engagement,
+                           write_synthetic_metadata)
 
-    if args.results:
+    if args.from_sheet:
+        records = None          # tags come from the sheet itself
+    elif args.results:
         with open(args.results) as f:
             records = json.load(f)
         print(f"Loaded {len(records)} tagged results from {args.results}")
@@ -142,19 +145,29 @@ def _cmd_insights(args) -> None:
         print(f"Tagged {len(records)} images from {args.input}")
 
     path = args.metadata
-    if args.synthetic:
+    if args.synthetic and records is not None:
         path = write_synthetic_metadata([r["path"] for r in records],
                                         args.synthetic)
         print(f"\n*** Using SYNTHETIC metadata written to {path} -- these "
               f"numbers exercise the join, they are not real findings. ***")
 
     metadata = load_metadata(path)
-    joined = join_tags(records, metadata)
-    print(f"Matched {len(joined)}/{len(records)} tagged images to metadata rows")
+    if args.from_sheet:
+        joined = rows_from_sheet(metadata)
+        print(f"Read {len(metadata)} rows from {path}; "
+              f"{len(joined)} carry tags in their file name")
+    else:
+        joined = join_tags(records, metadata)
+        print(f"Matched {len(joined)}/{len(records)} tagged images to "
+              f"metadata rows")
     if not joined:
-        print("No rows matched. Check that the sheet's file-name column holds "
-              "the image file names.")
+        print("Nothing to analyse. The supplied sheet covers the labelled "
+              "training images, not the test set -- try --from-sheet.")
         return
+
+    with_metric = sum(1 for r in joined
+                      if str(r.get(args.metric, "")).strip() not in ("", "nan"))
+    print(f"{with_metric}/{len(joined)} of those have a '{args.metric}' value")
 
     report = tag_engagement(joined, metric=args.metric,
                             min_support=args.min_support)
@@ -231,6 +244,10 @@ def main(argv=None) -> int:
     src = pi.add_mutually_exclusive_group(required=True)
     src.add_argument("--input", help="folder of images to tag, then analyse")
     src.add_argument("--results", help="reuse a results.json from `tag`")
+    src.add_argument("--from-sheet", action="store_true",
+                     help="take tags from the sheet's own labelled file names "
+                          "(no model call; the supplied sheet covers the "
+                          "labelled training images)")
     pi.add_argument("--metadata", default="data/meta_data.xlsx",
                     help="metadata sheet (.xlsx or .csv)")
     pi.add_argument("--synthetic", metavar="PATH", default=None,
