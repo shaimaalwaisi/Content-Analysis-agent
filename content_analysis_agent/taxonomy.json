@@ -1,0 +1,26 @@
+{
+  "_note": "Controlled marketing-tag vocabulary. 'taxonomy' is the two-level (General -> Specific) hierarchy from Appendix 1 of the brief. 'observed_extra' lists Specific tags that appear in the TRAINING filenames but are absent from Appendix 1; they are also merged into their General list below so the model may predict them and evaluation does not penalise them.",
+  "taxonomy": {
+    "accessories": ["accessories"],
+    "awards": ["awards"],
+    "benchmark": ["benchmark"],
+    "bonus": ["bonus"],
+    "dimension": ["dimension"],
+    "energy rating": ["energy rating"],
+    "feature graphics": [
+      "ai", "application", "battery life", "camera", "compatibility",
+      "call quality", "connectivity", "durability", "gaming",
+      "picture quality", "portability", "sound quality", "comfort",
+      "sustainability", "controls", "customisability"
+    ],
+    "person": ["social group"],
+    "product summary": ["product summary"],
+    "physical design": [
+      "back angle", "colour", "front angle", "multiple angles", "side angle",
+      "earbuds", "case", "top", "bottom", "left", "right"
+    ],
+    "usage scene": ["indoor", "outdoor", "transport"],
+    "whats in the box": ["whats in the box"]
+  },
+  "observed_extra": ["left", "right"]
+}

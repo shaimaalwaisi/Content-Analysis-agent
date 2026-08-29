@@ -1,48 +1,35 @@
-"""Marketing tag taxonomy.
+"""Marketing tag taxonomy (loaded from taxonomy.json).
 
-Two-level hierarchy (General -> Specific) from Appendix 1 of the brief.
-A few Specific tags that appear in the TRAINING filenames but are missing
-from Appendix 1 (e.g. 'left', 'right') are added and flagged OBSERVED, so the
-model may predict them and evaluation does not unfairly penalise them.
+The controlled vocabulary lives in taxonomy.json next to this module so it can
+be edited without touching code. It is a two-level hierarchy (General ->
+Specific) from Appendix 1 of the brief. A few Specifics that appear in the
+TRAINING filenames but are missing from Appendix 1 (e.g. 'left', 'right') are
+listed under 'observed_extra' and merged in, so the model may predict them and
+evaluation does not unfairly penalise them.
 
-Both General tags (e.g. 'physical design') and Specific tags (e.g. 'side
-angle') are valid labels; an image usually gets its General category plus one
-or more Specifics.
+Public API (unchanged): TAXONOMY, OBSERVED_EXTRA, allowed_tags(), normalise(),
+taxonomy_prompt().
 """
 from __future__ import annotations
 
-TAXONOMY: dict[str, list[str]] = {
-    "accessories": ["accessories"],
-    "awards": ["awards"],
-    "benchmark": ["benchmark"],
-    "bonus": ["bonus"],
-    "dimension": ["dimension"],
-    "energy rating": ["energy rating"],
-    "feature graphics": [
-        "ai", "application", "battery life", "camera", "compatibility",
-        "call quality", "connectivity", "durability", "gaming",
-        "picture quality", "portability", "sound quality", "comfort",
-        "sustainability", "controls", "customisability",
-    ],
-    "person": ["social group"],
-    "product summary": ["product summary"],
-    "physical design": [
-        "back angle", "colour", "front angle", "multiple angles", "side angle",
-        "earbuds", "case", "top", "bottom",
-        "left", "right",  # OBSERVED in train filenames, absent from Appendix 1
-    ],
-    "usage scene": ["indoor", "outdoor", "transport"],
-    "whats in the box": ["whats in the box"],
-}
+import json
+from pathlib import Path
 
-OBSERVED_EXTRA = {"left", "right"}
+_TAXONOMY_FILE = Path(__file__).with_name("taxonomy.json")
+
+with _TAXONOMY_FILE.open(encoding="utf-8") as _f:
+    _data = json.load(_f)
+
+TAXONOMY: dict[str, list[str]] = _data["taxonomy"]
+OBSERVED_EXTRA: set[str] = set(_data.get("observed_extra", []))
 
 
 def allowed_tags() -> set[str]:
-    """Flat set of every valid tag (General + Specific)."""
+    """Flat set of every valid tag (General + Specific + observed extras)."""
     tags: set[str] = set(TAXONOMY.keys())
     for specifics in TAXONOMY.values():
         tags.update(specifics)
+    tags.update(OBSERVED_EXTRA)
     return tags
 
 
