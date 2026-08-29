@@ -1,7 +1,7 @@
 """The controlled vocabulary, and the labels encoded in training filenames."""
-from content_analysis_agent.labels import (load_labelled,
+from agent.labels import (load_labelled,
                                            parse_tags_from_filename)
-from content_analysis_agent.taxonomy import (OBSERVED_EXTRA, TAXONOMY,
+from agent.taxonomy import (OBSERVED_EXTRA, TAXONOMY,
                                              allowed_tags, normalise)
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from content_analysis_agent.vlm import get_client
+from agent.vlm import get_client
 
 from .common import (add_enrich_args, add_memory_args, add_provider_args,
                      build_memory, build_search_tool)

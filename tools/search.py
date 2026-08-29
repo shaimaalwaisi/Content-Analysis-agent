@@ -22,9 +22,9 @@ import os
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from content_analysis_agent.tools_types import SearchResult
+from agent.tools_types import SearchResult
 
-from content_analysis_agent.logconf import get_logger
+from agent.logconf import get_logger
 
 log = get_logger(__name__)
 

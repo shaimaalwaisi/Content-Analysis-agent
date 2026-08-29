@@ -14,7 +14,7 @@ try:
 except Exception:
     pass
 
-from content_analysis_agent.logconf import setup_logging
+from agent.logconf import setup_logging
 
 from . import evaluate, insights, tag, taxonomy
 

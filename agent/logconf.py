@@ -45,7 +45,7 @@ def setup_logging(level: str = "WARNING", path: str | None = None) -> None:
     `level` is a standard level name; `path` writes JSON lines to a file
     instead of stderr. Called once from the CLI and the Streamlit app.
     """
-    logger = logging.getLogger("content_analysis_agent")
+    logger = logging.getLogger("agent")
     logger.setLevel(getattr(logging, level.upper(), logging.WARNING))
     logger.handlers.clear()
     handler = (logging.FileHandler(path, encoding="utf-8") if path
@@ -57,4 +57,4 @@ def setup_logging(level: str = "WARNING", path: str | None = None) -> None:
 
 def get_logger(name: str) -> logging.Logger:
     """Module-level logger under the package namespace."""
-    return logging.getLogger(f"content_analysis_agent.{name.rsplit('.', 1)[-1]}")
+    return logging.getLogger(f"agent.{name.rsplit('.', 1)[-1]}")

@@ -4,8 +4,8 @@ from __future__ import annotations
 import csv
 import json
 
-from content_analysis_agent.pipeline import results_to_dicts, run_folder
-from content_analysis_agent.vlm import get_client
+from agent.pipeline import results_to_dicts, run_folder
+from agent.vlm import get_client
 
 from .common import (add_enrich_args, add_memory_args, add_provider_args,
                      build_memory, build_search_tool)
@@ -32,7 +32,7 @@ def run(args) -> None:
 
     examples = None
     if args.few_shot:
-        from content_analysis_agent.fewshot import load_examples
+        from agent.fewshot import load_examples
         examples = load_examples(args.train_dir, limit=args.few_shot)
         print(f"Using {len(examples)} few-shot example(s) from {args.train_dir}")
 

@@ -6,7 +6,7 @@ the agent tags, which is what `evaluation` measures. Keeping the two apart
 matters: a tag can be predicted perfectly and still be commercially dull, and
 the reverse.
 
-Depends inward on `content_analysis_agent` for logging and label parsing; the
+Depends inward on `agent` for logging and label parsing; the
 agent imports nothing from here, and the CLI wires the two together.
 """
 from .metadata import (format_engagement, join_tags, load_metadata,

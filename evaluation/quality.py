@@ -16,11 +16,11 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from content_analysis_agent.graph import _infer_context, build_graph
-from content_analysis_agent.memory import TagMemory
+from agent.graph import _infer_context, build_graph
+from agent.memory import TagMemory
 from .runstats import RunStats
-from content_analysis_agent.labels import load_labelled
-from content_analysis_agent.vlm import VLMClient
+from agent.labels import load_labelled
+from agent.vlm import VLMClient
 
 if TYPE_CHECKING:
     from tools import SearchTool
@@ -221,7 +221,7 @@ def evaluate(root: str, client: VLMClient, sample: int | None = None,
     """
     # Local import: fewshot imports this module, so importing it at module
     # level would be circular.
-    from content_analysis_agent.fewshot import load_examples
+    from agent.fewshot import load_examples
 
     data = load_labelled(root)
     if sample:

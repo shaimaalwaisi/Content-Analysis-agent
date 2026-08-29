@@ -1,9 +1,9 @@
 """The agent itself: validation, memory routing, enrichment, instrumentation."""
 import pytest
 
-from content_analysis_agent.graph import _infer_context, build_graph, tag_one
-from content_analysis_agent.memory import TagMemory
-from content_analysis_agent.tools_types import SearchResult
+from agent.graph import _infer_context, build_graph, tag_one
+from agent.memory import TagMemory
+from agent.tools_types import SearchResult
 from evaluation.runstats import RunStats
 
 

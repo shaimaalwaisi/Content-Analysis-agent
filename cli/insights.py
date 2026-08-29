@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import json
 
-from content_analysis_agent.pipeline import results_to_dicts, run_folder
-from content_analysis_agent.vlm import get_client
+from agent.pipeline import results_to_dicts, run_folder
+from agent.vlm import get_client
 
 from .common import add_memory_args, add_provider_args, build_memory
 

@@ -3,8 +3,8 @@ import threading
 
 import pytest
 
-from content_analysis_agent.memory import TagMemory, make_key
-from content_analysis_agent.retry import call_with_retry, is_transient
+from agent.memory import TagMemory, make_key
+from agent.retry import call_with_retry, is_transient
 
 
 class Boom(Exception):

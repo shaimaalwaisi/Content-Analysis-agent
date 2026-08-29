@@ -4,7 +4,7 @@ import io
 
 from PIL import Image
 
-from content_analysis_agent.vlm import (MAX_IMAGE_DIM, MockVLM,
+from agent.vlm import (MAX_IMAGE_DIM, MockVLM,
                                         OPENAI_COMPATIBLE, PROVIDERS,
                                         encode_image, get_client,
                                         parse_tag_array, sniff_media_type)

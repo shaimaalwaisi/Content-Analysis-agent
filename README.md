@@ -109,7 +109,7 @@ load_image -> recall -+-(hit)-------------------------------> END
 Two layers live outside the package, alongside `app/`:
 
 ```
-content_analysis_agent/   the agent and everything it needs to produce tags
+agent/   the agent and everything it needs to produce tags
 tools/                    capabilities it can call: search.py
 evaluation/               measures the agent: quality.py, runstats.py
 analysis/                 measures the data: metadata.py (tags vs engagement)
@@ -121,7 +121,7 @@ app/                      Streamlit UI
 predicted perfectly and still be commercially dull, and the reverse.
 
 **Dependencies point inward.** `tools`, `evaluation`, `analysis` and `cli` all import
-`content_analysis_agent`; it imports neither of them at runtime. Where the core needs their types —
+`agent`; it imports neither of them at runtime. Where the core needs their types —
 `SearchTool` in `graph`, `RunStats` in `pipeline` — the import sits under `TYPE_CHECKING` and the
 annotation is a string, so the agent package imports cleanly with both folders absent. Concrete
 tools and collectors are passed in as arguments, and the CLI decides which.

@@ -22,11 +22,11 @@ try:
 except Exception:
     pass
 
-from content_analysis_agent.graph import build_graph  # noqa: E402
-from content_analysis_agent.logconf import setup_logging  # noqa: E402
-from content_analysis_agent.memory import TagMemory  # noqa: E402
-from content_analysis_agent.taxonomy import taxonomy_prompt  # noqa: E402
-from content_analysis_agent.vlm import PROVIDERS, get_client  # noqa: E402
+from agent.graph import build_graph  # noqa: E402
+from agent.logconf import setup_logging  # noqa: E402
+from agent.memory import TagMemory  # noqa: E402
+from agent.taxonomy import taxonomy_prompt  # noqa: E402
+from agent.vlm import PROVIDERS, get_client  # noqa: E402
 
 setup_logging(os.environ.get("LOG_LEVEL", "WARNING"))
 
@@ -70,7 +70,7 @@ def _tagging_tab() -> None:
                 app = build_graph(client, memory=memory)
                 examples = None
                 if few_shot:
-                    from content_analysis_agent.fewshot import load_examples
+                    from agent.fewshot import load_examples
                     examples = load_examples(limit=few_shot)
                 with st.spinner("Tagging..."):
                     out = app.invoke({"image_path": tmp_path,

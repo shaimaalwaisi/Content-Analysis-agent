@@ -5,9 +5,9 @@ import pytest
 from analysis.metadata import (_canonical, join_tags, load_metadata,
                                rows_from_sheet, tag_engagement,
                                write_synthetic_metadata)
-from content_analysis_agent.evidence import EVIDENCE_RULES, tags_from_evidence
-from content_analysis_agent.taxonomy import allowed_tags
-from content_analysis_agent.tools_types import SearchResult
+from agent.evidence import EVIDENCE_RULES, tags_from_evidence
+from agent.taxonomy import allowed_tags
+from agent.tools_types import SearchResult
 from tools import MockSearchTool, get_search_tool
 
 

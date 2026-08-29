@@ -1,7 +1,7 @@
 """Batch behaviour, and that every CLI subcommand is wired up."""
 import json
 
-from content_analysis_agent.pipeline import (find_images, results_to_dicts,
+from agent.pipeline import (find_images, results_to_dicts,
                                              run_folder)
 from evaluation.runstats import RunStats
 

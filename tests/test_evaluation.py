@@ -1,7 +1,7 @@
 """Scoring: the metrics, the baselines, and the guard against a broken run."""
 import pytest
 
-from content_analysis_agent.fewshot import load_examples
+from agent.fewshot import load_examples
 from evaluation import (baseline_predictions, compare_baselines,
                         compute_metrics, failure_warning, format_comparison,
                         most_common_tags)
@@ -88,7 +88,7 @@ class TestFailureWarning:
 
 class TestFewShotLeakage:
     def test_an_image_never_sees_its_own_answer(self, labelled_dir):
-        from content_analysis_agent.labels import load_labelled
+        from agent.labels import load_labelled
         for path, _tags in load_labelled(labelled_dir):
             examples = load_examples(labelled_dir, exclude=path)
             assert len(examples) == 2, "the scored image must be excluded"

@@ -15,7 +15,7 @@ from __future__ import annotations
 import os
 from statistics import median
 
-from content_analysis_agent.logconf import get_logger
+from agent.logconf import get_logger
 
 log = get_logger(__name__)
 
@@ -120,7 +120,7 @@ def rows_from_sheet(records: list[dict]) -> list[dict]:
     engagement question can be answered straight from the sheet -- real tags
     against real view counts, with no model in the loop and nothing to join.
     """
-    from content_analysis_agent.labels import parse_tags_from_filename
+    from agent.labels import parse_tags_from_filename
 
     out = []
     for rec in records:

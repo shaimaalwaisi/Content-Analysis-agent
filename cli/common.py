@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import argparse
 
-from content_analysis_agent.memory import DEFAULT_PATH as MEMORY_PATH
-from content_analysis_agent.vlm import PROVIDERS
+from agent.memory import DEFAULT_PATH as MEMORY_PATH
+from agent.vlm import PROVIDERS
 
 
 def add_provider_args(p: argparse.ArgumentParser) -> None:
@@ -36,7 +36,7 @@ def add_enrich_args(p: argparse.ArgumentParser) -> None:
 
 def build_memory(args):
     """The TagMemory a command should use, or None when disabled."""
-    from content_analysis_agent.memory import TagMemory
+    from agent.memory import TagMemory
     return None if args.no_memory else TagMemory(args.memory)
 
 

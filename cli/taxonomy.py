@@ -1,7 +1,7 @@
 """`taxonomy` -- print the controlled vocabulary."""
 from __future__ import annotations
 
-from content_analysis_agent.taxonomy import allowed_tags, taxonomy_prompt
+from agent.taxonomy import allowed_tags, taxonomy_prompt
 
 
 def run(_args) -> None:

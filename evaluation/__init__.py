@@ -20,7 +20,7 @@ name is actually used, which keeps the package a single front door without the
 cycle.
 
 Label parsing (`parse_tags_from_filename`, `load_labelled`) deliberately does
-NOT live here -- it is in `content_analysis_agent.labels`, because `fewshot`
+NOT live here -- it is in `agent.labels`, because `fewshot`
 needs it too and the core package must not import this layer.
 
 The quality module is named `quality`, not `evaluate`: a submodule sets itself
