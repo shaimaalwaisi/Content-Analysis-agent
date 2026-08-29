@@ -1,0 +1,17 @@
+# Content Analysis Agent - runtime dependencies
+# Install with:  pip install -r requirements.txt
+# Tested on Python 3.11.
+
+# The agent itself: load_image -> tag_image -> validate_tags state machine.
+langgraph>=1.2,<2
+
+# Vision-language providers. Both are imported lazily in vlm.py, so you only
+# need the one matching --provider; --provider mock needs neither.
+anthropic>=1.2,<2
+openai>=3.6,<4
+
+# Streamlit demo UI (app/streamlit_app.py).
+streamlit>=1.62,<2
+
+# Reads ANTHROPIC_API_KEY / OPENAI_API_KEY from a local .env file.
+python-dotenv>=1.2,<2

@@ -6,14 +6,14 @@ Examples
 python -m content_analysis_agent.cli taxonomy
 
 # Tag a folder of test images -> JSON (offline, no key needed)
-python -m content_analysis_agent.cli tag --input data/sample_train --provider mock
+python -m content_analysis_agent.cli tag --input data/test/TV --provider mock
 
 # Tag with Claude vision and write results
-python -m content_analysis_agent.cli tag --input "path/to/test" --provider anthropic \
+python -m content_analysis_agent.cli tag --input data/test --provider anthropic \
     --output results.json
 
 # Score the agent against the labels baked into the train filenames
-python -m content_analysis_agent.cli eval --train-dir "path/to/train" \
+python -m content_analysis_agent.cli eval --train-dir data/train \
     --provider anthropic --sample 30 --report metrics.json
 """
 from __future__ import annotations
