@@ -64,8 +64,15 @@ Results look like:
 streamlit run app/streamlit_app.py
 ```
 
-Upload a single image, pick a provider in the sidebar, optionally raise the **Few-shot examples**
-slider, and press **Tag image**.
+Two tabs. **Tag an image** takes a single upload, a provider, and an optional few-shot count, and
+runs the live agent. **Scores** is a read-only view of a report written by
+`python -m cli eval --report metrics.json`: headline metrics, the baseline comparison with pass/fail
+verdicts, the workflow metrics, and the per-tag breakdown.
+
+The Scores tab deliberately makes no model calls. Evaluation is a minutes-long batch job that
+belongs on the command line; re-running it from a web page would add a progress UI without adding
+information. It renders the JSON the CLI already produces, and tells you the command to generate it
+when the file is missing.
 
 Uploaded files land in a temp path, so the agent cannot infer the product from the folder name the
 way the CLI does. Fill in the **Product context** box (e.g. `Category: TV, Model: XR-65A95K`) to give
