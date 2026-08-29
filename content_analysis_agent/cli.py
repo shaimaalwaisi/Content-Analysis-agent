@@ -125,6 +125,54 @@ def _cmd_eval(args) -> None:
         print(f"\nFull report written to {args.report}")
 
 
+def _cmd_insights(args) -> None:
+    from .metadata import (format_engagement, join_tags, load_metadata,
+                           tag_engagement, write_synthetic_metadata)
+
+    if args.results:
+        with open(args.results) as f:
+            records = json.load(f)
+        print(f"Loaded {len(records)} tagged results from {args.results}")
+    else:
+        client = get_client(args.provider, args.model)
+        memory = None if args.no_memory else TagMemory(args.memory)
+        results = run_folder(args.input, client, limit=args.limit,
+                             memory=memory, workers=args.workers)
+        records = results_to_dicts(results)
+        print(f"Tagged {len(records)} images from {args.input}")
+
+    path = args.metadata
+    if args.synthetic:
+        path = write_synthetic_metadata([r["path"] for r in records],
+                                        args.synthetic)
+        print(f"\n*** Using SYNTHETIC metadata written to {path} -- these "
+              f"numbers exercise the join, they are not real findings. ***")
+
+    metadata = load_metadata(path)
+    joined = join_tags(records, metadata)
+    print(f"Matched {len(joined)}/{len(records)} tagged images to metadata rows")
+    if not joined:
+        print("No rows matched. Check that the sheet's file-name column holds "
+              "the image file names.")
+        return
+
+    report = tag_engagement(joined, metric=args.metric,
+                            min_support=args.min_support)
+    vals = [float(str(r.get(args.metric)).replace(",", ""))
+            for r in joined if str(r.get(args.metric)).replace(",", "")
+            .replace(".", "").isdigit()]
+    overall = sum(vals) / len(vals) if vals else None
+    print(f"\nWhich tags earn attention (ranked by lift on '{args.metric}')")
+    print(format_engagement(report, args.metric, overall))
+
+    if args.output:
+        with open(args.output, "w") as f:
+            json.dump({"metric": args.metric, "overall_mean": overall,
+                       "synthetic": bool(args.synthetic),
+                       "matched": len(joined), "tags": report}, f, indent=2)
+        print(f"\nWrote report to {args.output}")
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="content_analysis_agent",
@@ -176,6 +224,31 @@ def main(argv=None) -> int:
     pe.add_argument("--no-memory", action="store_true",
                     help="ignore stored tags and always call the model")
     pe.set_defaults(func=_cmd_eval)
+
+    pi = sub.add_parser("insights",
+                        help="join tags to the metadata sheet and rank tags "
+                             "by engagement")
+    src = pi.add_mutually_exclusive_group(required=True)
+    src.add_argument("--input", help="folder of images to tag, then analyse")
+    src.add_argument("--results", help="reuse a results.json from `tag`")
+    pi.add_argument("--metadata", default="data/meta_data.xlsx",
+                    help="metadata sheet (.xlsx or .csv)")
+    pi.add_argument("--synthetic", metavar="PATH", default=None,
+                    help="generate a SYNTHETIC sheet at PATH and use it "
+                         "(for demos when the real sheet is unavailable)")
+    pi.add_argument("--metric", default="views",
+                    help="numeric column to rank by (default: views)")
+    pi.add_argument("--min-support", type=int, default=2,
+                    help="ignore tags on fewer than N images")
+    pi.add_argument("--provider", default="anthropic",
+                    choices=["anthropic", "openai", "mock"])
+    pi.add_argument("--model", default=None)
+    pi.add_argument("--limit", type=int, default=None)
+    pi.add_argument("--workers", type=int, default=1)
+    pi.add_argument("--output", default=None, help="write report JSON")
+    pi.add_argument("--memory", default=MEMORY_PATH)
+    pi.add_argument("--no-memory", action="store_true")
+    pi.set_defaults(func=_cmd_insights)
 
     args = p.parse_args(argv)
     setup_logging(args.log_level, args.log_file)

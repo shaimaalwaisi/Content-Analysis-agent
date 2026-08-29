@@ -96,6 +96,7 @@ load_image -> recall -+-(hit)-------------------------------> END
 | `memory.py` | Persistent tag memory (SQLite), so identical requests skip the model. |
 | `logconf.py` | Structured JSON-lines logging. |
 | `retry.py` | Exponential backoff for transient provider failures. |
+| `metadata.py` | Joins tags to the metadata sheet and ranks tags by engagement. |
 | `fewshot.py` | Turns the labelled training images into few-shot demonstrations. |
 
 Because every entry point goes through `build_graph`, the graph is the extension point: inserting a
@@ -191,6 +192,41 @@ python -m content_analysis_agent.cli --log-level INFO --log-file run.log tag --i
 
 `out_of_vocab_tags` is the metric worth alerting on: the validation step silently drops predictions
 outside the taxonomy, so a rising drop rate is the earliest signal of prompt or taxonomy drift.
+
+## Which tags earn attention
+
+Tagging answers *what is in this image*. The brief opens with a different question — marketing wants
+to know "what content is popular and engaging" — and supplies `meta_data.xslx` with file names,
+product names, categories, prices and **image views**. The `insights` command joins the two and
+ranks tags by how much attention their images get.
+
+```bash
+python -m content_analysis_agent.cli insights --input data/test --provider anthropic \
+    --metadata data/meta_data.xlsx --workers 8 --output insights.json
+
+# Reuse an earlier tagging run instead of paying for it twice
+python -m content_analysis_agent.cli insights --results results.json --metadata data/meta_data.xlsx
+```
+
+```
+tag              images  mean views      lift
+product summary      48         2,676.9   1.08x
+side angle           19         2,521.8   1.02x
+front angle          40         2,213.9   0.89x
+```
+
+**Lift** is the tag's mean metric divided by the overall mean: above 1.0 means images carrying that
+tag out-perform the average. `--min-support N` hides tags too rare to read anything into, and
+`--metric` ranks by any numeric column in the sheet (`price`, say, instead of `views`).
+
+Column headers are matched fuzzily by keyword, so `File Name`, `image_filename`, `Image Views` and
+`views_30d` all resolve; `.xlsx` and `.csv` both load. The join is on image file name, and the
+command reports how many tagged images found a metadata row.
+
+The sheet ships with the task data rather than this repo. If you do not have it to hand,
+`--synthetic PATH` writes a stand-in with the same shape so the join can be demonstrated offline —
+the brief permits synthetic data for extras. Output from a synthetic sheet is labelled as such: it
+exercises the pipeline and is **not** a finding about real products.
 
 ## Tag taxonomy
 

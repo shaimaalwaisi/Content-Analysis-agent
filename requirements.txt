@@ -16,5 +16,10 @@ pillow>=12,<13
 # Streamlit demo UI (app/streamlit_app.py).
 streamlit>=1.62,<2
 
+# Only for the `insights` command, which reads the metadata sheet. Imported
+# lazily in metadata.py, so tagging and evaluation run without them.
+pandas>=2.0
+openpyxl>=3.1,<4
+
 # Reads ANTHROPIC_API_KEY / OPENAI_API_KEY from a local .env file.
 python-dotenv>=1.2,<2
