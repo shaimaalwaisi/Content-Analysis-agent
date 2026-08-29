@@ -14,6 +14,7 @@ happens later (graph.validate_tags).
 from __future__ import annotations
 
 import base64
+import io
 import json
 import os
 import re
@@ -136,11 +137,36 @@ def get_client(provider: str, model: str | None = None) -> VLMClient:
     raise ValueError(f"Unknown provider: {provider!r}")
 
 
-def encode_image(path: str) -> tuple[str, str]:
-    """Return (base64_data, media_type) for an image file."""
+# Product shots carry far more pixels than a tagging model needs, and the
+# payload is billed and transferred per byte, so shrink before upload.
+MAX_IMAGE_DIM = 1024   # px on the longest side
+JPEG_QUALITY = 85
+
+
+def encode_image(path: str, max_dim: int = MAX_IMAGE_DIM) -> tuple[str, str]:
+    """Return (base64_data, media_type) for an image file.
+
+    Images longer than `max_dim` on their longest side are downscaled and
+    re-encoded as JPEG; smaller ones are sent untouched. Pass max_dim=0 to
+    send the original bytes regardless.
+    """
     ext = os.path.splitext(path)[1].lower().lstrip(".")
     media_type = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
                   "png": "image/png", "webp": "image/webp",
                   "gif": "image/gif"}.get(ext, "image/jpeg")
+
+    if max_dim:
+        try:
+            from PIL import Image
+            with Image.open(path) as im:
+                if max(im.size) > max_dim:
+                    shrunk = im.convert("RGB")
+                    shrunk.thumbnail((max_dim, max_dim), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    shrunk.save(buf, format="JPEG", quality=JPEG_QUALITY)
+                    data = buf.getvalue()
+                    return base64.standard_b64encode(data).decode(), "image/jpeg"
+        except Exception:
+            pass  # Pillow missing or file unreadable: fall back to raw bytes
     with open(path, "rb") as f:
         return base64.standard_b64encode(f.read()).decode(), media_type

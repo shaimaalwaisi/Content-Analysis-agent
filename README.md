@@ -43,8 +43,9 @@ python -m content_analysis_agent.cli eval --train-dir data/train \
     --provider anthropic --sample 30 --report metrics.json
 ```
 
-Useful flags: `--limit N` caps how many images are tagged, `--model` overrides the model id, and
-`--provider` selects `anthropic` (default), `openai`, or `mock`.
+Useful flags: `--limit N` caps how many images are tagged, `--model` overrides the model id,
+`--provider` selects `anthropic` (default), `openai`, or `mock`, and `--few-shot N` prepends N
+labelled training images as worked examples (see [Few-shot prompting](#few-shot-prompting)).
 
 Results look like:
 
@@ -63,7 +64,8 @@ Results look like:
 streamlit run app/streamlit_app.py
 ```
 
-Upload a single image, pick a provider in the sidebar, and press **Tag image**.
+Upload a single image, pick a provider in the sidebar, optionally raise the **Few-shot examples**
+slider, and press **Tag image**.
 
 Uploaded files land in a temp path, so the agent cannot infer the product from the folder name the
 way the CLI does. Fill in the **Product context** box (e.g. `Category: TV, Model: XR-65A95K`) to give
@@ -103,6 +105,32 @@ such as `awards` or `benchmark` — reaches the CLI, the pipeline, evaluation, a
 | `mock` | — | No network, no key. Returns a fixed guess per category; useful for wiring and demos, **not** for measuring accuracy. |
 
 SDK imports are lazy, so the mock path runs without either provider package installed.
+
+## Few-shot prompting
+
+The 8 labelled training images are too few to train a vision model, but they are well suited to
+few-shot prompting: `--few-shot N` prepends N of them to the request as worked
+`image → tags` demonstrations, which costs nothing to prepare and needs no extra annotation.
+
+```bash
+python -m content_analysis_agent.cli tag --input data/test --provider anthropic --few-shot 4
+python -m content_analysis_agent.cli eval --train-dir data/train --provider anthropic --few-shot 4
+```
+
+During evaluation the image being scored is always removed from its own example set, so examples and
+test items can share one folder without inflating the score.
+
+Note that all 8 labelled images are of a single phone and are tagged almost entirely under
+`physical design`, so they teach angle vocabulary well and say nothing about `feature graphics`,
+`usage scene`, or the other categories. Examples are not free either: each one is re-sent with every
+request, so `--few-shot 8` multiplies image tokens per call by nine.
+
+## Image downscaling
+
+Images longer than 1024px on their longest side are downscaled and re-encoded as JPEG before upload
+(`vlm.encode_image`). Vision models bill by pixel area rather than file size, so on this dataset the
+resize cuts roughly **51% of image tokens** — about $0.75 to $0.36 per full 107-image run at Sonnet
+input pricing — with no loss of tagging detail at this resolution. Pass `max_dim=0` to send originals.
 
 ## Tag taxonomy
 

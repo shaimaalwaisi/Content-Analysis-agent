@@ -5,7 +5,7 @@ import os
 from dataclasses import asdict, dataclass
 
 from .graph import _infer_context, build_graph
-from .vlm import VLMClient
+from .vlm import Example, VLMClient
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 
@@ -41,9 +41,11 @@ def _split_context(ctx: str) -> tuple[str, str]:
 
 
 def run_folder(root: str, client: VLMClient, limit: int | None = None,
-               on_item=None) -> list[TagResult]:
+               on_item=None,
+               examples: list[Example] | None = None) -> list[TagResult]:
     """Tag every image under `root`. `on_item(i, total, result)` is an optional
-    progress callback (used by the CLI / Streamlit UI)."""
+    progress callback (used by the CLI / Streamlit UI). `examples` are few-shot
+    demonstrations prepended to every request (see fewshot.load_examples)."""
     app = build_graph(client)
     paths = find_images(root)
     if limit:
@@ -53,7 +55,8 @@ def run_folder(root: str, client: VLMClient, limit: int | None = None,
     for i, path in enumerate(paths, 1):
         ctx = _infer_context(path)
         try:
-            out = app.invoke({"image_path": path, "context": ctx or None})
+            out = app.invoke({"image_path": path, "context": ctx or None,
+                              "examples": examples})
             tags = out.get("tags", [])
         except Exception as exc:  # keep going on a single bad image
             tags = []

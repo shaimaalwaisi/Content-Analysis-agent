@@ -10,6 +10,9 @@ langgraph>=1.2,<2
 anthropic>=1.2,<2
 openai>=3.6,<4
 
+# Downscales images before upload (vlm.encode_image); also a Streamlit dep.
+pillow>=12,<13
+
 # Streamlit demo UI (app/streamlit_app.py).
 streamlit>=1.62,<2
 

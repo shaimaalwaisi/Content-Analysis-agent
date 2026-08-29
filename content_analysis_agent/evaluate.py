@@ -124,9 +124,19 @@ def compute_metrics(truth: list[list[str]],
 
 
 def evaluate(root: str, client: VLMClient, sample: int | None = None,
-             on_item=None) -> tuple[Metrics, list[dict]]:
+             on_item=None, few_shot: int | None = None
+             ) -> tuple[Metrics, list[dict]]:
     """Run the agent over labelled images and score it. Returns metrics plus a
-    per-image record (path, truth, predicted) for inspection."""
+    per-image record (path, truth, predicted) for inspection.
+
+    `few_shot` prepends up to N labelled examples to each request. The image
+    being scored is always excluded from its own examples, so the score stays
+    honest even though examples and test items share one folder.
+    """
+    # Local import: fewshot imports this module, so importing it at module
+    # level would be circular.
+    from .fewshot import load_examples
+
     data = load_labelled(root)
     if sample:
         data = data[:sample]
@@ -135,8 +145,11 @@ def evaluate(root: str, client: VLMClient, sample: int | None = None,
     truth, pred, records = [], [], []
     for i, (path, gt) in enumerate(data, 1):
         ctx = _infer_context(path)
+        examples = (load_examples(root, limit=few_shot, exclude=path)
+                    if few_shot else None)
         try:
-            out = app.invoke({"image_path": path, "context": ctx or None})
+            out = app.invoke({"image_path": path, "context": ctx or None,
+                              "examples": examples})
             got = out.get("tags", [])
         except Exception as exc:
             got = []

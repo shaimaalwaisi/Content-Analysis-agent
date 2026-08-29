@@ -35,6 +35,10 @@ with st.sidebar:
     model = st.text_input("Model (optional)", value="")
     context = st.text_input("Product context (optional)",
                             placeholder="Category: Mobile, Model: XPERIA10MK5")
+    few_shot = st.slider(
+        "Few-shot examples", 0, 8, 0,
+        help="Show the model this many labelled training images before "
+             "asking. 0 = zero-shot.")
     with st.expander("Controlled vocabulary"):
         st.text(taxonomy_prompt())
 
@@ -52,8 +56,13 @@ if uploaded is not None:
         try:
             client = get_client(provider, model or None)
             app = build_graph(client)
+            examples = None
+            if few_shot:
+                from content_analysis_agent.fewshot import load_examples
+                examples = load_examples(limit=few_shot)
             with st.spinner("Tagging..."):
-                tags = tag_one(app, tmp_path, context=context or None)
+                tags = tag_one(app, tmp_path, context=context or None,
+                               examples=examples)
         except Exception as exc:
             st.error(f"Tagging failed: {exc}")
             tags = []

@@ -43,11 +43,18 @@ def _cmd_taxonomy(_args) -> None:
 def _cmd_tag(args) -> None:
     client = get_client(args.provider, args.model)
 
+    examples = None
+    if args.few_shot:
+        from .fewshot import load_examples
+        examples = load_examples(args.train_dir, limit=args.few_shot)
+        print(f"Using {len(examples)} few-shot example(s) from {args.train_dir}")
+
     def progress(i, total, res):
         name = res.path.rsplit("/", 1)[-1]
         print(f"[{i}/{total}] {name} -> {res.tags}")
 
-    results = run_folder(args.input, client, limit=args.limit, on_item=progress)
+    results = run_folder(args.input, client, limit=args.limit,
+                         on_item=progress, examples=examples)
     records = results_to_dicts(results)
 
     if args.output:
@@ -76,8 +83,11 @@ def _cmd_eval(args) -> None:
         mark = "OK " if set(gt) == set(got) else "xx "
         print(f"[{i}/{total}] {mark}{name}\n      truth={gt}\n      pred ={got}")
 
+    if args.few_shot:
+        print(f"Using up to {args.few_shot} few-shot example(s) "
+              f"(the scored image is always excluded from its own examples)")
     metrics, records = evaluate(args.train_dir, client, sample=args.sample,
-                                on_item=progress)
+                                on_item=progress, few_shot=args.few_shot)
     print("\n" + "=" * 48)
     print(metrics.summary())
     print("=" * 48)
@@ -107,6 +117,10 @@ def main(argv=None) -> int:
     pg.add_argument("--model", default=None, help="override model id")
     pg.add_argument("--limit", type=int, default=None, help="max images")
     pg.add_argument("--output", default=None, help="results .json or .csv")
+    pg.add_argument("--few-shot", type=int, default=0, metavar="N",
+                    help="prepend N labelled training images as examples")
+    pg.add_argument("--train-dir", default="data/train",
+                    help="where --few-shot examples come from")
     pg.set_defaults(func=_cmd_tag)
 
     pe = sub.add_parser("eval", help="score the agent against train labels")
@@ -117,6 +131,9 @@ def main(argv=None) -> int:
     pe.add_argument("--sample", type=int, default=None,
                     help="evaluate only the first N labelled images")
     pe.add_argument("--report", default=None, help="write full report JSON")
+    pe.add_argument("--few-shot", type=int, default=0, metavar="N",
+                    help="prepend up to N labelled examples, excluding the "
+                         "image being scored")
     pe.set_defaults(func=_cmd_eval)
 
     args = p.parse_args(argv)
