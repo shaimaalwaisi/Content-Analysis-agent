@@ -181,6 +181,33 @@ def compare_baselines(truth: list[list[str]],
     return out
 
 
+def failure_warning(records: list[dict]) -> str:
+    """Loud warning when images failed, so a broken run cannot read as a bad score.
+
+    Without this an outage, a bad model id, or a provider limit produces a
+    confident-looking 0.000 next to the baselines, which is worse than no
+    number at all.
+    """
+    failed = [r for r in records if r.get("error")]
+    if not failed:
+        return ""
+    kinds = {}
+    for r in failed:
+        kinds[r["error"].split(":")[0]] = kinds.get(
+            r["error"].split(":")[0], 0) + 1
+    lines = ["", "!" * 62,
+             f"WARNING: {len(failed)}/{len(records)} images FAILED and scored "
+             f"as empty predictions.",
+             "The metrics below understate the model - fix the errors before "
+             "reading them.", ""]
+    for kind, n in sorted(kinds.items(), key=lambda kv: -kv[1]):
+        lines.append(f"  {n:>3} x {kind}")
+    example = failed[0]["error"]
+    lines.append(f"  first: {example[:150]}")
+    lines.append("!" * 62)
+    return "\n".join(lines)
+
+
 def format_comparison(scored: dict[str, Metrics]) -> str:
     """Render the agent-vs-baseline table, with an explicit verdict."""
     width = max(len(n) for n in scored)
@@ -231,12 +258,16 @@ def evaluate(root: str, client: VLMClient, sample: int | None = None,
             out = app.invoke({"image_path": path, "context": ctx or None,
                               "examples": examples})
             got = out.get("tags", [])
+            error = None
         except Exception as exc:
-            got = []
+            got, error = [], f"{type(exc).__name__}: {exc}"
             print(f"  ! {os.path.basename(path)}: {exc}")
         truth.append(gt)
         pred.append(got)
-        records.append({"path": path, "truth": gt, "predicted": got})
+        record = {"path": path, "truth": gt, "predicted": got}
+        if error:
+            record["error"] = error
+        records.append(record)
         if on_item:
             on_item(i, len(data), path, gt, got)
     return compute_metrics(truth, pred), records

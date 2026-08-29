@@ -150,9 +150,10 @@ OPENAI_COMPATIBLE = {
                "model": "gpt-4o"},
     "xai": {"base_url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY",
             "model": "grok-2-vision-1212"},
+    # Groq's catalogue is mostly text-only; qwen3.8-27b is the vision model
+    # verified to accept image content on a free account.
     "groq": {"base_url": "https://api.groq.com/openai/v1",
-             "key_env": "GROQ_API_KEY",
-             "model": "meta-llama/llama-4-scout-17b-16e-instruct"},
+             "key_env": "GROQ_API_KEY", "model": "qwen/qwen3.8-27b"},
     "ollama": {"base_url": "http://localhost:11434/v1",
                "key_env": "OLLAMA_API_KEY", "model": "llama3.2-vision",
                "key_fallback": "ollama"},

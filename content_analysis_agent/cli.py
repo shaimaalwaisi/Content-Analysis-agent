@@ -81,7 +81,8 @@ def _cmd_tag(args) -> None:
 
 def _cmd_eval(args) -> None:
     # local imports: the mock path needs no key
-    from .evaluate import compare_baselines, evaluate, format_comparison
+    from .evaluate import (compare_baselines, evaluate, failure_warning,
+                           format_comparison)
 
     client = get_client(args.provider, args.model)
 
@@ -97,6 +98,9 @@ def _cmd_eval(args) -> None:
     metrics, records = evaluate(args.train_dir, client, sample=args.sample,
                                 on_item=progress, few_shot=args.few_shot,
                                 memory=memory)
+    warning = failure_warning(records)
+    if warning:
+        print(warning)
     print("\n" + "=" * 48)
     print(metrics.summary())
     if memory:
@@ -110,6 +114,8 @@ def _cmd_eval(args) -> None:
         scored = compare_baselines(truth, pred)
         print("\nAgent vs model-free baselines")
         print(format_comparison(scored))
+        if warning:
+            print("\n(Scores above are unreliable - see the failure warning.)")
 
     if args.report:
         payload = {"metrics": {k: v for k, v in vars(metrics).items()

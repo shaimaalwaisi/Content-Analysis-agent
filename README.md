@@ -110,7 +110,7 @@ such as `awards` or `benchmark` — reaches the CLI, the pipeline, evaluation, a
 | `anthropic` | `claude-sonnet-5` | `ANTHROPIC_API_KEY` |
 | `openai` | `gpt-4o` | `OPENAI_API_KEY` |
 | `xai` | `grok-2-vision-1212` | `XAI_API_KEY` |
-| `groq` | `llama-4-scout` | `GROQ_API_KEY` |
+| `groq` | `qwen/qwen3.8-27b` | `GROQ_API_KEY` |
 | `ollama` | `llama3.2-vision` | none — local server |
 | `mock` | — | none. Deterministic, offline; for wiring and demos only, **never** for measuring accuracy |
 
@@ -122,7 +122,13 @@ one-flag experiment:
 python -m content_analysis_agent.cli eval --train-dir data/train --provider groq --few-shot 4
 ```
 
-Model ids move quickly on these services; pass `--model` if a default has been retired. Because the
+Model ids move quickly on these services; pass `--model` if a default has been retired. Most of
+Groq's catalogue is text-only — `openai/gpt-oss-120b` and the `compound` models reject image content
+outright — so the default is the vision model verified to accept it.
+
+**Providers cap images per request.** `qwen3.8-27b` allows three, so `--few-shot 2` (two examples
+plus the target) is its ceiling; asking for more returns a 400 for every image. `eval` prints a loud
+warning when images fail rather than reporting the resulting zeros as a score. Because the
 memory cache key includes the model id, switching providers never returns another model's tags, and
 the baseline table in `eval` shows immediately whether a cheaper model still clears the floor.
 
