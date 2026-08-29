@@ -95,10 +95,14 @@ class AnthropicWebSearch:
     loop to write here.
     """
 
-    model: str = "claude-sonnet-5"
+    model: str = "claude-haiku-4-5-20251001"
     max_uses: int = 3
     max_tokens: int = 1024
     allowed_domains: list[str] | None = None
+    # Newer models take the dynamic-filtering variant; older ones only the
+    # basic one. Rather than hardcode a model list that will go stale, try the
+    # newer tool once and fall back, remembering the answer.
+    tool_type: str | None = None
 
     def __post_init__(self) -> None:
         from anthropic import Anthropic
@@ -108,14 +112,36 @@ class AnthropicWebSearch:
                 "file in the repo root.")
         self._client = Anthropic()
 
-    def search(self, query: str) -> list[SearchResult]:
-        tool: dict = {"type": "web_search_20260209", "name": "web_search",
+    def _tool(self, tool_type: str) -> dict:
+        tool: dict = {"type": tool_type, "name": "web_search",
                       "max_uses": self.max_uses}
         if self.allowed_domains:
             tool["allowed_domains"] = self.allowed_domains
-        resp = self._client.messages.create(
-            model=self.model, max_tokens=self.max_tokens, tools=[tool],
-            messages=[{"role": "user", "content": query}])
+        return tool
+
+    def _call(self, query: str):
+        candidates = ([self.tool_type] if self.tool_type
+                      else ["web_search_20260209", "web_search_20250305"])
+        last = None
+        for tool_type in candidates:
+            try:
+                resp = self._client.messages.create(
+                    model=self.model, max_tokens=self.max_tokens,
+                    tools=[self._tool(tool_type)],
+                    messages=[{"role": "user", "content": query}])
+            except Exception as exc:
+                if type(exc).__name__ != "BadRequestError":
+                    raise
+                log.info("web_search_tool_unsupported",
+                         extra={"model": self.model, "tool": tool_type})
+                last = exc
+                continue
+            self.tool_type = tool_type       # remember what this model accepts
+            return resp
+        raise last
+
+    def search(self, query: str) -> list[SearchResult]:
+        resp = self._call(query)
 
         out: list[SearchResult] = []
         for block in resp.content:
@@ -147,7 +173,7 @@ def get_search_tool(name: str, model: str | None = None) -> SearchTool:
     if name == "mock":
         return MockSearchTool()
     if name in ("anthropic", "web"):
-        return AnthropicWebSearch(model=model or "claude-sonnet-5")
+        return AnthropicWebSearch(model=model or "claude-haiku-4-5-20251001")
     raise ValueError(f"Unknown search tool: {name!r}. Choose: mock, anthropic")
 
 

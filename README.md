@@ -109,7 +109,7 @@ such as `awards` or `benchmark` — reaches the CLI, the pipeline, evaluation, a
 
 | `--provider` | Default model | Key |
 | --- | --- | --- |
-| `anthropic` | `claude-sonnet-5` | `ANTHROPIC_API_KEY` |
+| `anthropic` | `claude-haiku-4-5` | `ANTHROPIC_API_KEY` |
 | `openai` | `gpt-4o` | `OPENAI_API_KEY` |
 | `xai` | `grok-2-vision-1212` | `XAI_API_KEY` |
 | `groq` | `qwen/qwen3.8-27b` | `GROQ_API_KEY` |
@@ -304,10 +304,13 @@ The scores in `eval` measure *tagging quality* against ground-truth labels, so t
 Agent workflow metrics (no labels required)
   Hallucination   : 0.000 (0/10 proposed tags out of vocabulary)
                     0.000 of answered images proposed at least one
-  Latency (model) : p50 732 ms | p95 16848 ms | 3 call(s)
-  Latency (tool)  : p50 0 ms | p95 0 ms | 3 call(s)
+  Latency (model) : p50 1100 ms | p95 1100 ms | 1 call(s)
+  Latency (tool)  : p50 7943 ms | p95 7943 ms | 1 call(s)
   Efficiency      : cache hit 0.000 | 0 retr(ies) | 0 failure(s) (0.000)
 ```
+
+Timing them separately is what shows enrichment costs ~7.5 s against ~1 s for the tagging call —
+which is why `--enrich` is opt-in.
 
 - **Hallucination** is the share of proposed tags falling outside the vocabulary. `validate_tags`
   drops them silently, so without this the failure is invisible. It needs no ground truth, which
@@ -346,6 +349,21 @@ empty dataset.
 `eval` reports micro and macro precision / recall / F1, sample-averaged Jaccard, exact-match rate,
 and per-tag support. Metrics are computed by hand rather than via scikit-learn, to keep the
 definitions explicit and the dependency list small.
+
+### Measured results
+
+Claude Haiku 4.5 on the 8 labelled images:
+
+| Run | micro-F1 | Jaccard | exact-match |
+| --- | --- | --- | --- |
+| prior top-3 baseline | 0.638 | 0.469 | 0.000 |
+| zero-shot | 0.630 | 0.517 | 0.125 |
+| **`--few-shot 8`** | **0.875** | **0.812** | **0.625** |
+
+Few-shot is what makes the difference: zero-shot does not beat a baseline that ignores the image,
+while eight examples clear all three success criteria. Groq's `qwen3.8-27b` reaches 0.640 with
+`--few-shot 2` (its 3-image-per-request ceiling). Eight images is a small sample — treat this as
+directional, not a benchmark.
 
 ### What counts as success
 

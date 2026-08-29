@@ -132,7 +132,12 @@ def build_graph(client: VLMClient, memory: TagMemory | None = None,
         context = state.get("context") or ""
         if not context:
             return {"enriched_tags": []}
-        query = f"Sony {context.replace('Category:', '').replace('Model:', '')}"
+        # Ask for the evidence the rules look for. A bare product query
+        # returns generic marketing copy that mentions none of it.
+        product = (context.replace("Category:", "")
+                          .replace("Model:", "").replace(",", " ").strip())
+        query = (f"Sony {product}: has it won any awards, what do benchmark "
+                 f"or lab test results say, and what is its energy rating?")
         started = time.perf_counter()
         try:
             results = call_with_retry(lambda: search_tool.search(query.strip()),

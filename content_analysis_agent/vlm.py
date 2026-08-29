@@ -3,7 +3,7 @@
 A thin, swappable interface so the agent does not care which provider tags the
 image. Three implementations ship:
 
-* AnthropicVLM  - default, Claude vision (claude-sonnet-5 by default)
+* AnthropicVLM  - default, Claude vision (claude-haiku-4-5 by default)
 * OpenAIVLM     - any OpenAI-compatible vision endpoint: OpenAI itself, and
                   equally xAI (Grok), Groq, or a local Ollama, which all speak
                   the same wire format and differ only by base URL and key
@@ -55,7 +55,7 @@ class VLMClient(Protocol):
 class AnthropicVLM:
     """Claude vision. Requires ANTHROPIC_API_KEY and `pip install anthropic`."""
 
-    model: str = "claude-sonnet-5"
+    model: str = "claude-haiku-4-5-20251001"
     max_tokens: int = 300
 
     def __post_init__(self) -> None:
@@ -165,7 +165,7 @@ PROVIDERS = ["anthropic", *OPENAI_COMPATIBLE, "mock"]
 def get_client(provider: str, model: str | None = None) -> VLMClient:
     provider = provider.lower()
     if provider == "anthropic":
-        return AnthropicVLM(model=model or "claude-sonnet-5")
+        return AnthropicVLM(model=model or "claude-haiku-4-5-20251001")
     if provider in OPENAI_COMPATIBLE:
         cfg = OPENAI_COMPATIBLE[provider]
         return OpenAIVLM(model=model or cfg["model"],
@@ -183,30 +183,50 @@ MAX_IMAGE_DIM = 1024   # px on the longest side
 JPEG_QUALITY = 85
 
 
+# Magic bytes, because a file's extension is not evidence of its format: the
+# training data contains a PNG named .jpg, and providers validate the declared
+# media type against the actual bytes and reject the mismatch.
+_MAGIC = (
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def sniff_media_type(data: bytes, fallback: str = "image/jpeg") -> str:
+    """Media type from the file's own bytes, not its name."""
+    for signature, media_type in _MAGIC:
+        if data.startswith(signature):
+            return media_type
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return fallback
+
+
 def encode_image(path: str, max_dim: int = MAX_IMAGE_DIM) -> tuple[str, str]:
     """Return (base64_data, media_type) for an image file.
 
     Images longer than `max_dim` on their longest side are downscaled and
     re-encoded as JPEG; smaller ones are sent untouched. Pass max_dim=0 to
-    send the original bytes regardless.
+    send the original bytes regardless. The media type is detected from the
+    file's content rather than its extension.
     """
-    ext = os.path.splitext(path)[1].lower().lstrip(".")
-    media_type = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
-                  "png": "image/png", "webp": "image/webp",
-                  "gif": "image/gif"}.get(ext, "image/jpeg")
+    with open(path, "rb") as f:
+        data = f.read()
+    media_type = sniff_media_type(data)
 
     if max_dim:
         try:
             from PIL import Image
-            with Image.open(path) as im:
+            with Image.open(io.BytesIO(data)) as im:
                 if max(im.size) > max_dim:
                     shrunk = im.convert("RGB")
                     shrunk.thumbnail((max_dim, max_dim), Image.LANCZOS)
                     buf = io.BytesIO()
                     shrunk.save(buf, format="JPEG", quality=JPEG_QUALITY)
-                    data = buf.getvalue()
-                    return base64.standard_b64encode(data).decode(), "image/jpeg"
+                    return (base64.standard_b64encode(buf.getvalue()).decode(),
+                            "image/jpeg")
         except Exception:
-            pass  # Pillow missing or file unreadable: fall back to raw bytes
-    with open(path, "rb") as f:
-        return base64.standard_b64encode(f.read()).decode(), media_type
+            pass  # Pillow missing or file unreadable: send the raw bytes
+    return base64.standard_b64encode(data).decode(), media_type

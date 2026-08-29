@@ -28,7 +28,10 @@ INSTRUCTION = (
 # How the answer must be formatted (kept strict so parsing is reliable).
 OUTPUT_FORMAT = (
     'Respond with ONLY a JSON array of tag strings, e.g. '
-    '["physical design", "side angle", "top"]. No other text.'
+    '["physical design", "side angle", "top"]. No other text.\n'
+    'Each array element must be exactly one tag, copied verbatim from the '
+    'vocabulary. Never join a General category to its Specific in one string: '
+    'write ["feature graphics", "camera"], not ["feature graphics: camera"].'
 )
 
 
