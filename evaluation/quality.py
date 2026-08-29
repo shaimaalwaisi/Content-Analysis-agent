@@ -11,44 +11,16 @@ dependency and to make exactly what we measure explicit.
 """
 from __future__ import annotations
 
-import ast
 import os
-import re
 from collections import Counter
 from dataclasses import dataclass
 
-from ..graph import _infer_context, build_graph
-from ..memory import TagMemory
+from content_analysis_agent.graph import _infer_context, build_graph
+from content_analysis_agent.memory import TagMemory
 from .runstats import RunStats
-from ..tools import SearchTool
-from ..taxonomy import normalise
-from ..pipeline import find_images
-from ..vlm import VLMClient
-
-
-def parse_tags_from_filename(name: str) -> list[str]:
-    """Extract the bracketed tag list from a filename. Returns [] if none."""
-    base = os.path.basename(name)
-    match = re.search(r"\[.*\]", base, re.DOTALL)
-    if not match:
-        return []
-    try:
-        tags = ast.literal_eval(match.group(0))
-    except (ValueError, SyntaxError):
-        return []
-    if not isinstance(tags, (list, tuple)):
-        return []
-    return [normalise(t) for t in tags]
-
-
-def load_labelled(root: str) -> list[tuple[str, list[str]]]:
-    """(image_path, ground_truth_tags) for every labelled image under root."""
-    out = []
-    for path in find_images(root):
-        tags = parse_tags_from_filename(path)
-        if tags:
-            out.append((path, tags))
-    return out
+from content_analysis_agent.tools import SearchTool
+from content_analysis_agent.labels import load_labelled
+from content_analysis_agent.vlm import VLMClient
 
 
 # --------------------------- success criteria -------------------------------
@@ -246,7 +218,7 @@ def evaluate(root: str, client: VLMClient, sample: int | None = None,
     """
     # Local import: fewshot imports this module, so importing it at module
     # level would be circular.
-    from ..fewshot import load_examples
+    from content_analysis_agent.fewshot import load_examples
 
     data = load_labelled(root)
     if sample:

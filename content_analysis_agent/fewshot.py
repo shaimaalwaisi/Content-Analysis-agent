@@ -5,13 +5,13 @@ a prompt-time teaching set: showing the model a handful of correctly tagged
 images is far cheaper than fine-tuning and needs no extra annotation.
 
 Kept in its own module so `pipeline` stays free of any dependency on the
-evaluation code.
+evaluation layer; the label parsing it needs lives in `labels`.
 """
 from __future__ import annotations
 
 import os
 
-from .evaluation import load_labelled
+from .labels import load_labelled
 from .vlm import Example, encode_image
 
 DEFAULT_TRAIN_DIR = "data/train"

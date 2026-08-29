@@ -92,13 +92,25 @@ load_image -> recall -+-(hit)-------------------------------> END
 | `vlm.py` | Swappable providers behind one `VLMClient` protocol: Anthropic, OpenAI, and an offline mock. |
 | `graph.py` | The LangGraph agent, including the validation step that drops out-of-vocabulary tags. |
 | `pipeline.py` | Batch-tags a folder, tolerating per-image failures so one bad file cannot abort a run. |
-| `evaluation/` | Its own package: `quality.py` scores tagging against labels, `runstats.py` measures agent behaviour. |
+| `labels.py` | Parses the ground-truth tags encoded in training filenames. |
 | `memory.py` | Persistent tag memory (SQLite), so identical requests skip the model. |
 | `logconf.py` | Structured JSON-lines logging. |
 | `retry.py` | Exponential backoff for transient provider failures. |
 | `metadata.py` | Joins tags to the metadata sheet and ranks tags by engagement. |
 | `tools.py` | Search tools for the enrich step, mock and Claude web search. |
 | `fewshot.py` | Turns the labelled training images into few-shot demonstrations. |
+
+Evaluation lives outside the package, in a top-level `evaluation/` folder alongside `app/`:
+`quality.py` scores tagging against labels, `runstats.py` measures agent behaviour. Dependencies
+point inward — `evaluation` imports `content_analysis_agent`, never the reverse. `graph` and
+`pipeline` accept a `RunStats` under `TYPE_CHECKING` only, so the core has no runtime dependency on
+the layer that measures it and imports cleanly on its own.
+
+```
+content_analysis_agent/   the agent and everything it needs to produce tags
+evaluation/               measures the agent: quality.py, runstats.py
+app/                      Streamlit UI
+```
 
 Because every entry point goes through `build_graph`, the graph is the extension point: inserting a
 node between `tag_image` and `validate_tags` — say, an enrichment step that looks up non-visual tags

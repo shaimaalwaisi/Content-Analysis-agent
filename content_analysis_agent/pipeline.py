@@ -5,13 +5,17 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING
 
 from .graph import _infer_context, build_graph
 from .logconf import get_logger
 from .memory import TagMemory
-from .evaluation.runstats import RunStats
 from .tools import SearchTool
 from .vlm import Example, VLMClient
+
+if TYPE_CHECKING:            # imported for typing only: the core
+    from evaluation.runstats import RunStats   # must not depend on
+                                               # the evaluation layer
 
 log = get_logger(__name__)
 
@@ -53,7 +57,7 @@ def run_folder(root: str, client: VLMClient, limit: int | None = None,
                examples: list[Example] | None = None,
                memory: TagMemory | None = None,
                workers: int = 1, search_tool: SearchTool | None = None,
-               stats: RunStats | None = None) -> list[TagResult]:
+               stats: "RunStats | None" = None) -> list[TagResult]:
     """Tag every image under `root`. `on_item(i, total, result)` is an optional
     progress callback (used by the CLI / Streamlit UI). `examples` are few-shot
     demonstrations prepended to every request (see fewshot.load_examples).

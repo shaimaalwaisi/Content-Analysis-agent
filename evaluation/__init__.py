@@ -19,6 +19,10 @@ fail at import time. PEP 562 module `__getattr__` defers each import until the
 name is actually used, which keeps the package a single front door without the
 cycle.
 
+Label parsing (`parse_tags_from_filename`, `load_labelled`) deliberately does
+NOT live here -- it is in `content_analysis_agent.labels`, because `fewshot`
+needs it too and the core package must not import this layer.
+
 The quality module is named `quality`, not `evaluate`: a submodule sets itself
 as an attribute of its package on import, so a submodule named `evaluate` would
 permanently shadow the `evaluate()` function re-exported here.
@@ -36,10 +40,8 @@ _EXPORTS = {
     "evaluate": "quality",
     "failure_warning": "quality",
     "format_comparison": "quality",
-    "load_labelled": "quality",
     "median_label_size": "quality",
     "most_common_tags": "quality",
-    "parse_tags_from_filename": "quality",
     "RunStats": "runstats",
 }
 

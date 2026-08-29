@@ -30,7 +30,6 @@ except Exception:
     pass
 
 from .logconf import setup_logging
-from .evaluation import RunStats
 from .tools import get_search_tool
 from .memory import DEFAULT_PATH as MEMORY_PATH, TagMemory
 from .pipeline import results_to_dicts, run_folder
@@ -45,6 +44,8 @@ def _cmd_taxonomy(_args) -> None:
 
 
 def _cmd_tag(args) -> None:
+    from evaluation.runstats import RunStats
+
     client = get_client(args.provider, args.model)
 
     examples = None
@@ -86,8 +87,9 @@ def _cmd_tag(args) -> None:
 
 def _cmd_eval(args) -> None:
     # local imports: the mock path needs no key
-    from .evaluation import (compare_baselines, evaluate, failure_warning,
-                             format_comparison)
+    from evaluation import (compare_baselines, evaluate, failure_warning,
+                            format_comparison)
+    from evaluation.runstats import RunStats
 
     client = get_client(args.provider, args.model)
 
