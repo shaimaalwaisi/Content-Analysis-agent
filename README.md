@@ -13,7 +13,7 @@ contain an invented label.
 pip install -r requirements.txt
 
 # Works offline, no API key required
-python -m content_analysis_agent.cli tag --input data/test/TV --provider mock
+python -m cli tag --input data/test/TV --provider mock
 ```
 
 To use a real vision model, create a `.env` in the repo root:
@@ -32,14 +32,14 @@ gitignored and never committed.
 
 ```bash
 # Print the controlled vocabulary (43 tags)
-python -m content_analysis_agent.cli taxonomy
+python -m cli taxonomy
 
 # Tag a folder of images, recursively
-python -m content_analysis_agent.cli tag --input data/test --provider anthropic \
+python -m cli tag --input data/test --provider anthropic \
     --output results.json          # a .csv extension writes CSV instead
 
 # Score the agent against the labels baked into the training filenames
-python -m content_analysis_agent.cli eval --train-dir data/train \
+python -m cli eval --train-dir data/train \
     --provider anthropic --sample 30 --report metrics.json
 ```
 
@@ -106,13 +106,14 @@ content_analysis_agent/   the agent and everything it needs to produce tags
 tools/                    capabilities it can call: search.py
 evaluation/               measures the agent: quality.py, runstats.py
 analysis/                 measures the data: metadata.py (tags vs engagement)
+cli/                      command-line entry point, one module per subcommand
 app/                      Streamlit UI
 ```
 
 `evaluation` and `analysis` answer different questions and are kept apart on purpose: a tag can be
 predicted perfectly and still be commercially dull, and the reverse.
 
-**Dependencies point inward.** `tools`, `evaluation` and `analysis` all import
+**Dependencies point inward.** `tools`, `evaluation`, `analysis` and `cli` all import
 `content_analysis_agent`; it imports neither of them at runtime. Where the core needs their types —
 `SearchTool` in `graph`, `RunStats` in `pipeline` — the import sits under `TYPE_CHECKING` and the
 annotation is a string, so the agent package imports cleanly with both folders absent. Concrete
@@ -143,7 +144,7 @@ they differ only by base URL, key variable, and default model. That makes a free
 one-flag experiment:
 
 ```bash
-python -m content_analysis_agent.cli eval --train-dir data/train --provider groq --few-shot 4
+python -m cli eval --train-dir data/train --provider groq --few-shot 4
 ```
 
 Model ids move quickly on these services; pass `--model` if a default has been retired. Most of
@@ -165,8 +166,8 @@ few-shot prompting: `--few-shot N` prepends N of them to the request as worked
 `image → tags` demonstrations, which costs nothing to prepare and needs no extra annotation.
 
 ```bash
-python -m content_analysis_agent.cli tag --input data/test --provider anthropic --few-shot 4
-python -m content_analysis_agent.cli eval --train-dir data/train --provider anthropic --few-shot 4
+python -m cli tag --input data/test --provider anthropic --few-shot 4
+python -m cli eval --train-dir data/train --provider anthropic --few-shot 4
 ```
 
 During evaluation the image being scored is always removed from its own example set, so examples and
@@ -189,11 +190,11 @@ changing `--few-shot` all correctly miss rather than returning a stale answer.
 
 ```bash
 # Second run over the same folder reuses everything and calls no model
-python -m content_analysis_agent.cli tag --input data/test --provider anthropic
+python -m cli tag --input data/test --provider anthropic
 # Memory: 107 hit(s), 0 miss(es) (100% reused), 107 entries in .agent_memory.sqlite3
 
-python -m content_analysis_agent.cli tag --input data/test --no-memory   # force fresh calls
-python -m content_analysis_agent.cli tag --input data/test --memory /tmp/other.sqlite3
+python -m cli tag --input data/test --no-memory   # force fresh calls
+python -m cli tag --input data/test --memory /tmp/other.sqlite3
 ```
 
 Memory is on by default and stored in `.agent_memory.sqlite3` (gitignored). The Streamlit sidebar has
@@ -214,7 +215,7 @@ work is submitted in order and the futures are read in order, so parallelism nev
 results or progress output.
 
 ```bash
-python -m content_analysis_agent.cli tag --input data/test --provider anthropic --workers 8
+python -m cli tag --input data/test --provider anthropic --workers 8
 ```
 
 **Retries.** Transient provider failures (429, 408/409, 5xx, connection and timeout errors) are
@@ -226,7 +227,7 @@ this, one rate-limit response would silently become an empty tag list for that i
 shipper. Human progress output stays on stdout.
 
 ```bash
-python -m content_analysis_agent.cli --log-level INFO --log-file run.log tag --input data/test
+python -m cli --log-level INFO --log-file run.log tag --input data/test
 ```
 
 ```json
@@ -246,7 +247,7 @@ categories, models, prices and **image views**. The `insights` command answers i
 
 ```bash
 # Rank tags by engagement using the sheet's own labelled file names
-python -m content_analysis_agent.cli insights --from-sheet --metadata data/meta_data.xlsx --min-support 3
+python -m cli insights --from-sheet --metadata data/meta_data.xlsx --min-support 3
 ```
 
 ```
@@ -298,8 +299,8 @@ load_image → recall ─(hit)────────────────�
 ```
 
 ```bash
-python -m content_analysis_agent.cli tag --input data/test --enrich --search-tool mock
-python -m content_analysis_agent.cli tag --input data/test --enrich --search-tool anthropic
+python -m cli tag --input data/test --enrich --search-tool mock
+python -m cli tag --input data/test --enrich --search-tool anthropic
 ```
 
 Two backends sit behind one protocol, mirroring `vlm.py`: `mock` is deterministic and offline;
@@ -348,7 +349,7 @@ angles, colour, case), `feature graphics` (camera, battery life, sound quality, 
 sustainability, and more), `usage scene` (indoor, outdoor, transport), plus standalone tags such as
 `accessories`, `awards`, `dimension`, `energy rating`, and `whats in the box`.
 
-Run `python -m content_analysis_agent.cli taxonomy` to print the full hierarchy. A few specifics that
+Run `python -m cli taxonomy` to print the full hierarchy. A few specifics that
 appear in the training data but not in the original specification (`left`, `right`) are tracked
 separately under `observed_extra` and merged in, so the model may predict them and evaluation does
 not penalise them.
