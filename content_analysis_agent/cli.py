@@ -144,9 +144,9 @@ def _cmd_eval(args) -> None:
 
 
 def _cmd_insights(args) -> None:
-    from .metadata import (format_engagement, join_tags, load_metadata,
-                           rows_from_sheet, tag_engagement,
-                           write_synthetic_metadata)
+    from analysis import (format_engagement, join_tags, load_metadata,
+                          rows_from_sheet, tag_engagement,
+                          write_synthetic_metadata)
 
     if args.from_sheet:
         records = None          # tags come from the sheet itself

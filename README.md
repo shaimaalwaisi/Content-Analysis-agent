@@ -96,7 +96,6 @@ load_image -> recall -+-(hit)-------------------------------> END
 | `memory.py` | Persistent tag memory (SQLite), so identical requests skip the model. |
 | `logconf.py` | Structured JSON-lines logging. |
 | `retry.py` | Exponential backoff for transient provider failures. |
-| `metadata.py` | Joins tags to the metadata sheet and ranks tags by engagement. |
 | `evidence.py` | Which non-visual tags a piece of search evidence supports. |
 | `fewshot.py` | Turns the labelled training images into few-shot demonstrations. |
 
@@ -105,11 +104,15 @@ Two layers live outside the package, alongside `app/`:
 ```
 content_analysis_agent/   the agent and everything it needs to produce tags
 tools/                    capabilities it can call: search.py
-evaluation/               measures it: quality.py, runstats.py
+evaluation/               measures the agent: quality.py, runstats.py
+analysis/                 measures the data: metadata.py (tags vs engagement)
 app/                      Streamlit UI
 ```
 
-**Dependencies point inward.** `tools` and `evaluation` both import
+`evaluation` and `analysis` answer different questions and are kept apart on purpose: a tag can be
+predicted perfectly and still be commercially dull, and the reverse.
+
+**Dependencies point inward.** `tools`, `evaluation` and `analysis` all import
 `content_analysis_agent`; it imports neither of them at runtime. Where the core needs their types —
 `SearchTool` in `graph`, `RunStats` in `pipeline` — the import sits under `TYPE_CHECKING` and the
 annotation is a string, so the agent package imports cleanly with both folders absent. Concrete
