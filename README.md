@@ -61,6 +61,8 @@ a CSV download.
 
 ## Results
 
+### Tag quality, against human labels
+
 Claude Haiku 4.5, `--few-shot 8`, scored leave-one-out over the 8 labelled training images — the
 image being scored is dropped from its own example list, so the model never sees its own answer.
 
@@ -70,9 +72,8 @@ image being scored is dropped from its own example list, so the model never sees
 | prior top-3 baseline | 0.638 | 0.221 |
 | **agent** | **0.745** | **0.555** |
 
-That run cost **$0.0068 per image**, and the model call took **1.75 s at p50**. Re-run it with
-`python -m cli eval --train-dir data/train --few-shot 8`, which writes the full record to
-`results/`.
+Re-run it with `python -m cli eval --train-dir data/train --few-shot 8`, which writes the full
+record to `results/`.
 
 Read it as directional, not a benchmark: n=8, all one phone model, and the model is not
 deterministic, so repeat runs move by several points. What it does establish is that the agent
@@ -82,6 +83,19 @@ is a high floor, because `physical design` appears in every label.
 Micro-F1 asks whether the tags are right; macro-F1 weights every tag equally, so it asks whether
 the *rare* tags are right too. A model that only ever predicts the two commonest tags scores well
 on the first and badly on the second.
+
+### Metrics that need no labels
+
+Micro- and macro-F1 need ground truth, which exists for 8 images. These four measure the agent
+itself, so they work on the 107 unlabelled test images and on live traffic. Every `tag` and `eval`
+run reports them, and they appear in the app's **Metrics** tab.
+
+| Metric | What it answers | The run above |
+| --- | --- | --- |
+| Task success rate | Of the images we were asked to tag, how many came back with usable tags? An image that raised and an image that returned an empty list both count as failures. | 1.000 — 8/8, 0 errors, 0 retries |
+| Cost per task | Input and output tokens at Anthropic's published rate, divided by tasks. A model with no rate card reports blank, never `$0.00`. | $0.0068 per image, $0.054 for the run |
+| Latency per action | Wall time per *action* — encode, model call, search call — as p50/p95. Per action, because a re-prompted image makes two model calls and a per-task figure hides which one is slow. | model call 1.75 s p50, 2.57 s p95 |
+| Self-consistency | Tag everything a second time with a different draw of examples and score the overlap. Steadiness, not correctness: a model can be repeatably wrong. | opt-in — `tag --consistency`, doubles the cost |
 
 From the metadata sheet, tags on images that earn views (n=44): `awards` 1.68×, `product summary`
 1.67×, `person` 1.47× the average, against `connectivity` 0.52×. Social proof and orienting shots
