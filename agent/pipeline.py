@@ -68,7 +68,7 @@ def run_folder(root: str, client: VLMClient, limit: int | None = None,
         ctx = _infer_context(path)
         started = time.perf_counter()
         if stats:
-            stats.record_image()
+            stats.record_task()
         try:
             out = app.invoke({"image_path": path, "context": ctx or None,
                               "examples": examples})
@@ -86,6 +86,10 @@ def run_folder(root: str, client: VLMClient, limit: int | None = None,
                 "image": path, "n_tags": len(tags),
                 "ms": round((time.perf_counter() - started) * 1000),
                 "cached": bool(out.get("cached"))})
+        if stats:
+            # Outside the else: a task that raised is a task that returned no
+            # tags, and both must count against the success rate.
+            stats.record_outcome(len(tags))
         category, model = _split_context(ctx)
         return TagResult(path=path, category=category, model=model, tags=tags,
                          highlights=highlight_tags(tags))

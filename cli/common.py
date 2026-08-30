@@ -17,9 +17,14 @@ from tools.database import DEFAULT_PATH as RESULTS_PATH
 
 
 def add_provider_args(p: argparse.ArgumentParser) -> None:
+    # One choice, kept as a flag so every run record still says what was
+    # called -- a settings block that omits the provider is harder to read a
+    # year later than one that states the obvious.
     p.add_argument("--provider", default="anthropic", choices=PROVIDERS,
-                   help="which vision model to call")
-    p.add_argument("--model", default=None, help="override the model id")
+                   help="the vision model to call (Claude)")
+    p.add_argument("--model", default=None,
+                   help="override the Claude model id (default: "
+                        "claude-haiku-4-5-20251001)")
 
 
 def add_memory_args(p: argparse.ArgumentParser) -> None:

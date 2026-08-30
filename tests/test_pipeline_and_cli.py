@@ -1,6 +1,8 @@
 """Batch behaviour, and that every CLI subcommand is wired up."""
 import json
 
+import pytest
+
 from agent.pipeline import (find_images, results_to_dicts,
                                              run_folder)
 from evaluation.runstats import RunStats
@@ -31,25 +33,20 @@ def _folder(tmp_path, n=4):
 
 
 class TestFindImages:
-    def test_walks_nested_folders_and_sorts(self, tmp_path):
-        paths = find_images(_folder(tmp_path))
-        assert len(paths) == 4 and paths == sorted(paths)
-
-    def test_ignores_non_images(self, tmp_path):
+    def test_walks_nested_folders_sorted_and_ignores_non_images(self, tmp_path):
         root = _folder(tmp_path)
         (tmp_path / "test" / "notes.txt").write_text("hello")
-        assert all(p.endswith(".jpg") for p in find_images(root))
+        paths = find_images(root)
+        assert len(paths) == 4 and paths == sorted(paths)
+        assert all(p.endswith(".jpg") for p in paths)
 
 
 class TestRunFolder:
-    def test_tags_every_image(self, tmp_path, stub):
+    def test_tags_every_image_and_infers_category_and_model(self, tmp_path,
+                                                            stub):
         results = run_folder(_folder(tmp_path), stub)
-        assert len(results) == 4
-        assert all(r.tags for r in results)
-
-    def test_infers_category_and_model(self, tmp_path, stub):
-        first = run_folder(_folder(tmp_path), stub)[0]
-        assert first.category == "TV" and first.model == "MODEL-1"
+        assert len(results) == 4 and all(r.tags for r in results)
+        assert results[0].category == "TV" and results[0].model == "MODEL-1"
 
     def test_limit_caps_the_work(self, tmp_path, stub):
         assert len(run_folder(_folder(tmp_path), stub, limit=2)) == 2
@@ -64,7 +61,10 @@ class TestRunFolder:
     def test_failures_are_counted(self, tmp_path):
         stats = RunStats()
         run_folder(_folder(tmp_path), FailFirstVLM(), stats=stats)
-        assert stats.failures == 1 and stats.images == 4
+        assert stats.failures == 1 and stats.tasks == 4
+        # The failed image returned no tags, so 3 of 4 tasks succeeded.
+        assert stats.successes == 3
+        assert stats.task_success_rate == pytest.approx(0.75)
 
     def test_workers_preserve_order(self, tmp_path, stub):
         # Parallelism must never reshuffle results: futures are read in
@@ -82,42 +82,38 @@ class TestRunFolder:
 class TestCLIParser:
     def test_every_subcommand_is_registered(self):
         parser = build_parser()
-        for cmd in ("taxonomy", "tag", "eval", "insights"):
+        for cmd in ("taxonomy", "tag", "insights"):
             args = parser.parse_args([cmd] + _minimal_args(cmd))
             assert callable(args.func)
 
-    def test_tag_defaults(self):
+    def test_tag_defaults_and_the_log_level_is_global(self):
         args = build_parser().parse_args(["tag", "--input", "x"])
         assert args.provider == "anthropic" and args.workers == 1
         assert args.few_shot == 0 and args.enrich is False
+        assert build_parser().parse_args(
+            ["--log-level", "INFO", "taxonomy"]).log_level == "INFO"
 
     def test_shared_flags_are_identical_across_commands(self):
+        # add_provider_args and friends exist so the flags cannot drift; with
+        # `tag` the only model-calling command left, `insights --input` is
+        # what still shares them.
         parser = build_parser()
         tag = parser.parse_args(["tag", "--input", "x"])
-        ev = parser.parse_args(["eval", "--train-dir", "x"])
-        assert tag.provider == ev.provider
-        assert tag.memory == ev.memory
-        assert tag.search_tool == ev.search_tool
+        ins = parser.parse_args(["insights", "--input", "x"])
+        assert tag.provider == ins.provider
+        assert tag.memory == ins.memory
 
-    def test_insights_requires_a_source(self):
-        import pytest
+    def test_insights_needs_exactly_one_source(self):
         with pytest.raises(SystemExit):
             build_parser().parse_args(["insights"])
-
-    def test_insights_sources_are_mutually_exclusive(self):
-        import pytest
         with pytest.raises(SystemExit):
             build_parser().parse_args(["insights", "--from-sheet",
                                        "--input", "x"])
 
-    def test_log_level_is_global(self):
-        args = build_parser().parse_args(["--log-level", "INFO", "taxonomy"])
-        assert args.log_level == "INFO"
-
 
 def _minimal_args(cmd):
     return {"taxonomy": [], "tag": ["--input", "x"],
-            "eval": ["--train-dir", "x"], "insights": ["--from-sheet"]}[cmd]
+            "insights": ["--from-sheet"]}[cmd]
 
 
 class TestRunRecords:
@@ -131,43 +127,34 @@ class TestRunRecords:
             setattr(args, key, value)
         return args
 
-    def test_writes_one_file_per_run(self, tmp_path):
+    def test_a_record_carries_the_payload_command_and_settings(self, tmp_path):
         from cli.runlog import write_run
         path = write_run("tag", self._args(tmp_path), {"images": 3})
         assert path and path.endswith("_tag.json")
-        assert json.load(open(path))["images"] == 3
-
-    def test_record_carries_command_time_and_settings(self, tmp_path):
-        from cli.runlog import write_run
-        record = json.load(open(write_run("tag", self._args(tmp_path), {})))
-        assert record["command"] == "tag"
+        record = json.load(open(path))
+        assert record["images"] == 3 and record["command"] == "tag"
         assert record["started_at"]
         assert record["settings"]["provider"] == "anthropic"
 
-    def test_no_results_disables_it(self, tmp_path):
+    def test_writing_is_optional_and_never_kills_a_run(self, tmp_path):
+        # A run that produced good tags must not fail at the last step,
+        # whether records are switched off or the directory is unwritable.
         from cli.runlog import write_run
-        args = self._args(tmp_path, no_results=True)
-        assert write_run("tag", args, {}) is None
-
-    def test_an_unwritable_directory_does_not_kill_the_run(self, tmp_path):
-        # A run that produced good tags must not fail at the last step.
-        from cli.runlog import write_run
+        assert write_run("tag", self._args(tmp_path, no_results=True),
+                         {}) is None
         blocker = tmp_path / "blocked"
         blocker.write_text("i am a file, not a directory")
         args = self._args(tmp_path)
         args.results_dir = str(blocker)
         assert write_run("tag", args, {}) is None
 
-    def test_latest_finds_the_newest_record(self, tmp_path):
+    def test_latest_finds_the_newest_record_or_nothing(self, tmp_path):
         from cli.runlog import latest, write_run
         args = self._args(tmp_path)
-        write_run("eval", args, {"n": 1})
-        newest = write_run("eval", args, {"n": 2})
-        assert latest("eval", results_dir=str(tmp_path / "results")) == newest
-
-    def test_latest_is_none_when_nothing_has_run(self, tmp_path):
-        from cli.runlog import latest
-        assert latest("eval", results_dir=str(tmp_path / "empty")) is None
+        write_run("tag", args, {"n": 1})
+        newest = write_run("tag", args, {"n": 2})
+        assert latest("tag", results_dir=str(tmp_path / "results")) == newest
+        assert latest("tag", results_dir=str(tmp_path / "empty")) is None
 
     def test_from_sheet_records_no_provider(self, tmp_path):
         # Nothing calls a model in that mode; naming one would mislead.

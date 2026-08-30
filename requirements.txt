@@ -8,7 +8,6 @@ langgraph>=1.2,<2
 # Vision-language providers. Both are imported lazily in vlm.py, so you only
 # need the one matching --provider; --provider mock needs neither.
 anthropic>=1.2,<2
-openai>=3.6,<4
 
 # Downscales images before upload (vlm.encode_image); also a Streamlit dep.
 pillow>=12,<13
@@ -24,5 +23,5 @@ openpyxl>=3.1,<4
 # Test suite (offline; no API key needed).
 pytest>=8.0
 
-# Reads ANTHROPIC_API_KEY / OPENAI_API_KEY from a local .env file.
+# Reads ANTHROPIC_API_KEY from a local .env file.
 python-dotenv>=1.2,<2

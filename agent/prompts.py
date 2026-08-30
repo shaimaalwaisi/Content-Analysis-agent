@@ -36,22 +36,39 @@ OUTPUT_FORMAT = (
 )
 
 
+# The four facts a results table needs that the tag vocabulary cannot express:
+# what the product is, and what the image says about it. Asked for in the same
+# call as the tags, because a second call would double the cost of a run to
+# fill four columns.
+DETAIL_FIELDS = ("Category", "Model", "Description", "Specs")
+
 # Reasoning mode: the same answer, preceded by the model's own justification
-# for each tag. The JSON array stays the last thing on the page, so the parser
-# that reads plain answers reads these unchanged -- the reasons are additive,
-# and a model that ignores them still produces a valid answer.
+# for each tag and the details above. The JSON array stays the last thing on
+# the page -- and nothing before it may contain a bracket -- so the parser that
+# reads plain answers reads these unchanged: the extras are additive, and a
+# model that ignores them still produces a valid answer.
 REASONED_OUTPUT_FORMAT = (
-    "Work in two steps.\n"
+    "Work in three steps.\n"
     "Step 1 - write one line for EVERY tag you will use, Generals and "
     "Specifics alike: the tag, a dash, and why the image supports it in at "
     "most 12 words. Example:\n"
     "physical design - the product itself is the subject\n"
     "side angle - the phone is photographed from its edge\n"
-    "Step 2 - on the final line, and nothing after it, give ONLY the JSON "
+    "Step 2 - then these four lines, exactly these labels, in this order:\n"
+    "Category: one of Mobile, TV, Video & Sound - or unknown\n"
+    "Model: the model name printed on the image or its infographic, e.g. "
+    "XPERIA1MK5, XR-65A95K - or unknown if none is shown\n"
+    "Description: one sentence, at most 20 words, saying what the image "
+    "shows\n"
+    "Specs: figures and names you can literally READ in the image, "
+    "comma-separated, e.g. 5000mAh, ZEISS, 65-inch, IP68 - or none. Never "
+    "guess a specification the image does not state.\n"
+    "Step 3 - on the final line, and nothing after it, give ONLY the JSON "
     'array of those same tags, e.g. ["physical design", "side angle"].\n'
     "Each array element must be exactly one tag, copied verbatim from the "
     "vocabulary. Never join a General category to its Specific in one string: "
-    'write ["feature graphics", "camera"], not ["feature graphics: camera"].'
+    'write ["feature graphics", "camera"], not ["feature graphics: camera"]. '
+    "Use no square brackets anywhere before that final line."
 )
 
 

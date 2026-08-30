@@ -22,14 +22,14 @@ shared `SearchResult` type; the core never imports this one at runtime. The
 agent takes a tool as an argument, and the CLI decides which one to pass, so
 `agent` stays importable with this folder absent.
 
-The rules turning evidence into tags live in `agent.evidence`,
+The rules turning evidence into tags live in `agent.enrichment`,
 because that is a statement about the taxonomy rather than about searching.
 """
 from .database import DEFAULT_PATH as RESULTS_PATH
 from .database import ResultStore, Tagging, new_run_id
 from .search import (AnthropicWebSearch, MockSearchTool, SearchTool,
                      get_search_tool)
-from agent.tools_types import SearchResult
+from agent.enrichment import SearchResult
 
 __all__ = ["AnthropicWebSearch", "MockSearchTool", "RESULTS_PATH",
            "ResultStore", "SearchResult", "SearchTool", "Tagging",

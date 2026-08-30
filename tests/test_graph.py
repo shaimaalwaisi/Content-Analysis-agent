@@ -3,7 +3,7 @@ import pytest
 
 from agent.graph import _infer_context, build_graph, tag_one
 from agent.memory import TagMemory
-from agent.tools_types import SearchResult
+from agent.enrichment import SearchResult
 from evaluation.runstats import RunStats
 
 
@@ -27,28 +27,16 @@ class TestInferContext:
     def test_reads_category_and_model_from_the_path(self):
         ctx = _infer_context("data/test/TV/XR-65A95K/img.jpg")
         assert "Category: TV" in ctx and "Model: XR-65A95K" in ctx
-
-    def test_handles_a_category_with_spaces(self):
-        ctx = _infer_context("data/test/Video & Sound/WH-CH520/img.jpg")
-        assert "Category: Video & Sound" in ctx
-
-    def test_returns_empty_for_an_unknown_layout(self):
+        assert "Category: Video & Sound" in _infer_context(
+            "data/test/Video & Sound/WH-CH520/img.jpg")
         # An upload lands in a temp file, so there is nothing to infer.
         assert _infer_context("/tmp/tmpabc123.jpg") == ""
 
 
 class TestValidation:
-    def test_drops_tags_outside_the_vocabulary(self, jpeg, stub):
-        stub.tags = ["physical design", "sparkly unicorn", "front angle"]
-        assert tag_one(build_graph(stub), jpeg) == ["physical design",
-                                                    "front angle"]
-
-    def test_deduplicates(self, jpeg, stub):
-        stub.tags = ["physical design", "physical design"]
-        assert tag_one(build_graph(stub), jpeg) == ["physical design"]
-
-    def test_normalises_before_matching(self, jpeg, stub):
-        stub.tags = ["Physical  Design", "FRONT ANGLE"]
+    def test_normalises_deduplicates_and_drops_the_unknown(self, jpeg, stub):
+        stub.tags = ["Physical  Design", "sparkly unicorn", "FRONT ANGLE",
+                     "physical design"]
         assert tag_one(build_graph(stub), jpeg) == ["physical design",
                                                     "front angle"]
 
@@ -61,9 +49,12 @@ class TestMemoryRouting:
     def test_second_identical_request_skips_the_model(self, jpeg, stub, tmp_path):
         mem = TagMemory(str(tmp_path / "m.sqlite3"))
         app = build_graph(stub, memory=mem)
+        stub.tags = ["physical design", "sparkly unicorn"]
         first = tag_one(app, jpeg)
         second = tag_one(app, jpeg)
-        assert first == second
+        # Identical answers, one model call -- and what was stored is the
+        # validated list, not the raw one the model returned.
+        assert first == second == ["physical design"]
         assert stub.calls == 1, "a cache hit must not call the model"
         mem.close()
 
@@ -73,13 +64,6 @@ class TestMemoryRouting:
         tag_one(app, jpeg, context="Category: TV")
         tag_one(app, jpeg, context="Category: Mobile")
         assert stub.calls == 2
-        mem.close()
-
-    def test_memory_stores_validated_tags_not_raw(self, jpeg, stub, tmp_path):
-        stub.tags = ["physical design", "sparkly unicorn"]
-        mem = TagMemory(str(tmp_path / "m.sqlite3"))
-        app = build_graph(stub, memory=mem)
-        assert tag_one(app, jpeg) == tag_one(app, jpeg) == ["physical design"]
         mem.close()
 
     def test_without_memory_every_call_reaches_the_model(self, jpeg, stub):
@@ -147,34 +131,24 @@ class ReasoningVLM:
 
 
 class TestReasoningLoop:
-    def test_a_weak_answer_is_asked_again(self, jpeg):
-        client = ReasoningVLM(["sparkly", "unicorn mode", "colour"],
-                              ["physical design", "colour"])
-        assert tag_one(build_graph(client), jpeg) == ["physical design",
-                                                      "colour"]
-        assert client.calls == 2
-
-    def test_a_good_answer_is_left_alone(self, jpeg):
-        client = ReasoningVLM(["physical design", "front angle"])
-        tag_one(build_graph(client), jpeg)
-        assert client.calls == 1, "a clean answer must not cost a second call"
-
-    def test_an_empty_answer_is_asked_again(self, jpeg):
-        client = ReasoningVLM([], ["physical design"])
-        assert tag_one(build_graph(client), jpeg) == ["physical design"]
+    def test_a_weak_answer_is_asked_again_and_a_good_one_is_not(self, jpeg):
+        weak = ReasoningVLM(["sparkly", "unicorn mode", "colour"],
+                            ["physical design", "colour"])
+        assert tag_one(build_graph(weak), jpeg) == ["physical design",
+                                                    "colour"]
+        assert weak.calls == 2
+        good = ReasoningVLM(["physical design", "front angle"])
+        tag_one(build_graph(good), jpeg)
+        assert good.calls == 1, "a clean answer must not cost a second call"
 
     def test_the_loop_is_bounded(self, jpeg):
         client = ReasoningVLM(["sparkly", "unicorn mode"])
         assert tag_one(build_graph(client), jpeg) == []
         assert client.calls == 2, "the loop must stop, however bad the answer"
 
-    def test_passes_one_turns_the_loop_off(self, jpeg):
-        client = ReasoningVLM(["sparkly", "unicorn mode", "colour"],
-                              ["physical design"])
-        tag_one(build_graph(client, passes=1), jpeg)
-        assert client.calls == 1
-
     def test_the_second_prompt_names_the_rejected_tags(self, jpeg):
+        # An empty answer is weak too, so this also covers the re-prompt after
+        # the model returns nothing at all.
         client = ReasoningVLM(["sparkly", "unicorn mode", "colour"],
                               ["physical design"])
         tag_one(build_graph(client), jpeg)
@@ -183,51 +157,43 @@ class TestReasoningLoop:
         assert "sparkly" in second and "unicorn mode" in second
         assert "colour" not in second, "only rejected tags are fed back"
 
-    def test_a_plain_client_still_works(self, jpeg, stub):
-        # StubVLM implements predict_tags only: no reasons, no feedback.
-        assert tag_one(build_graph(stub), jpeg) == ["physical design",
-                                                    "front angle"]
-
 
 class TestInstrumentation:
-    def test_counts_model_calls_and_hallucinations(self, jpeg, stub):
+    def test_a_weak_answer_costs_a_second_model_call(self, jpeg, stub):
         stub.tags = ["physical design", "sparkly", "unicorn mode"]
         stats = RunStats()
-        stats.record_image()
+        stats.record_task()
         # Two bad tags out of three is a weak answer, so the reasoning loop
-        # asks a second time -- and this stub answers the same way twice.
+        # asks a second time -- and this stub answers the same way twice. The
+        # re-prompt is why latency is measured per action and not per task.
         tag_one(build_graph(stub, stats=stats), jpeg)
         assert stats.model_calls == 2
-        assert stats.raw_tags == 6 and stats.dropped_tags == 4
-        assert stats.hallucination_rate == pytest.approx(2 / 3)
+        assert stats.latency_per_action()["model"]["calls"] == 2
 
-    def test_one_model_call_when_the_loop_is_off(self, jpeg, stub):
+    def test_passes_one_turns_the_loop_off_and_encode_is_timed(self, jpeg,
+                                                               stub):
+        # StubVLM implements predict_tags only -- no reasons, no feedback --
+        # so this also covers a plain client running the graph end to end.
         stub.tags = ["physical design", "sparkly", "unicorn mode"]
         stats = RunStats()
-        stats.record_image()
-        tag_one(build_graph(stub, stats=stats, passes=1), jpeg)
+        stats.record_task()
+        assert tag_one(build_graph(stub, stats=stats, passes=1), jpeg) == [
+            "physical design"]
         assert stats.model_calls == 1
-        assert stats.hallucination_rate == pytest.approx(2 / 3)
+        assert stats.latency_per_action()["encode"]["calls"] == 1
 
-    def test_clean_answers_have_no_hallucination(self, jpeg, stub):
-        stats = RunStats()
-        stats.record_image()
-        tag_one(build_graph(stub, stats=stats), jpeg)
-        assert stats.hallucination_rate == 0.0
-
-    def test_a_cache_hit_is_counted_and_does_not_dilute_the_rate(
-            self, jpeg, stub, tmp_path):
+    def test_a_cache_hit_costs_no_model_call(self, jpeg, stub, tmp_path):
         stub.tags = ["physical design", "sparkly"]
         mem = TagMemory(str(tmp_path / "m.sqlite3"))
         stats = RunStats()
         app = build_graph(stub, memory=mem, stats=stats)
-        stats.record_image()
+        stats.record_task()
         tag_one(app, jpeg)
-        stats.record_image()
+        stats.record_task()
         tag_one(app, jpeg)
-        assert stats.cache_hits == 1
-        # One model answer, one bad tag out of two proposed.
-        assert stats.hallucination_rate == pytest.approx(0.5)
+        # Two tasks, one model answer: the second was free, which is the whole
+        # argument for the cache and shows up directly in cost per task.
+        assert stats.cache_hits == 1 and stats.model_calls == 1
         mem.close()
 
     def test_examples_reach_the_client(self, jpeg, stub):

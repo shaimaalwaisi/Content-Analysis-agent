@@ -29,7 +29,7 @@ def run(args) -> None:
               f"(the scored image is always excluded from its own examples)")
 
     memory = build_memory(args)
-    stats = RunStats()
+    stats = RunStats(model_id=getattr(client, "model", ""))
     metrics, records = evaluate(args.train_dir, client, sample=args.sample,
                                 on_item=progress, few_shot=args.few_shot,
                                 memory=memory,

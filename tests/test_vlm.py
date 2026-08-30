@@ -2,118 +2,73 @@
 import base64
 import io
 
+import pytest
 from PIL import Image
 
-from agent.vlm import (MAX_IMAGE_DIM, MockVLM,
-                                        OPENAI_COMPATIBLE, PROVIDERS,
-                                        encode_image, get_client,
-                                        parse_reasons, parse_tag_array,
-                                        sniff_media_type)
+from agent.vlm import (DEFAULT_MODEL, MAX_IMAGE_DIM, PROVIDERS, Prediction,
+                       encode_image, get_client, parse_details, parse_reasons,
+                       parse_tag_array, sniff_media_type)
 
 
 def _decode(b64):
     return Image.open(io.BytesIO(base64.b64decode(b64)))
 
 
-class TestSniffMediaType:
-    def test_reads_the_bytes_not_the_name(self, png_named_jpg):
+class TestEncodeImage:
+    def test_media_type_comes_from_the_bytes_not_the_name(self, png_named_jpg):
         # The training set contains a PNG called .jpg. Declaring image/jpeg
         # for it makes the Anthropic API reject the request with a 400.
-        _b64, media = encode_image(png_named_jpg)
-        assert media == "image/png"
-
-    def test_known_signatures(self):
+        assert encode_image(png_named_jpg)[1] == "image/png"
         assert sniff_media_type(b"\x89PNG\r\n\x1a\n") == "image/png"
         assert sniff_media_type(b"\xff\xd8\xff\xe0") == "image/jpeg"
         assert sniff_media_type(b"RIFF____WEBP") == "image/webp"
         assert sniff_media_type(b"GIF89a") == "image/gif"
-
-    def test_unknown_falls_back_to_jpeg(self):
+        # A RIFF container that is not WEBP, and anything unrecognised, fall
+        # back rather than claim a type the bytes do not support.
+        assert sniff_media_type(b"RIFF____WAVE") == "image/jpeg"
         assert sniff_media_type(b"not an image") == "image/jpeg"
 
-    def test_riff_that_is_not_webp_is_not_claimed(self):
-        assert sniff_media_type(b"RIFF____WAVE") == "image/jpeg"
-
-
-class TestEncodeImage:
     def test_small_images_pass_through_untouched(self, jpeg):
         b64, media = encode_image(jpeg)
-        assert media == "image/jpeg"
-        assert _decode(b64).size == (64, 64)
+        assert media == "image/jpeg" and _decode(b64).size == (64, 64)
 
-    def test_large_images_are_downscaled(self, big_jpeg):
-        b64, media = encode_image(big_jpeg)
-        assert max(_decode(b64).size) == MAX_IMAGE_DIM
-        assert media == "image/jpeg"
-
-    def test_downscaling_preserves_aspect_ratio(self, big_jpeg):
+    def test_large_images_are_downscaled_in_proportion(self, big_jpeg):
         width, height = _decode(encode_image(big_jpeg)[0]).size
+        assert max(width, height) == MAX_IMAGE_DIM
         assert round(width / height, 2) == round(2000 / 1500, 2)
-
-    def test_max_dim_zero_sends_the_original(self, big_jpeg):
+        # max_dim=0 is the escape hatch: send exactly what is on disk.
         assert _decode(encode_image(big_jpeg, max_dim=0)[0]).size == (2000, 1500)
 
 
 class TestParseTagArray:
-    def test_plain_json_array(self):
+    def test_finds_the_array_however_it_is_wrapped(self):
         assert parse_tag_array('["physical design", "top"]') == [
             "physical design", "top"]
-
-    def test_strips_markdown_fences(self):
         assert parse_tag_array('```json\n["colour"]\n```') == ["colour"]
-
-    def test_finds_the_array_amid_prose(self):
         assert parse_tag_array('Sure! ["camera"] hope that helps') == ["camera"]
 
-    def test_empty_and_malformed_return_empty(self):
-        assert parse_tag_array("") == []
-        assert parse_tag_array("no array here") == []
-        assert parse_tag_array("[unclosed") == []
-
-    def test_coerces_scalar_elements_to_strings(self):
+    def test_a_malformed_answer_yields_nothing_and_odd_elements_are_fixed(
+            self):
+        # A nested array yields nothing at all: the extractor takes the first
+        # bracketed span, so a partial parse would invent a tag list.
+        for text in ("", "no array here", "[unclosed", '["ok", ["nested"]]'):
+            assert parse_tag_array(text) == []
         assert parse_tag_array('["ok", 5]') == ["ok", "5"]
-
-    def test_drops_object_elements(self):
         assert parse_tag_array('["ok", {"a": 1}]') == ["ok"]
-
-    def test_nested_arrays_yield_nothing(self):
-        # The extractor takes the first bracketed span, so a nested array
-        # produces a malformed slice. Returning [] is the safe outcome:
-        # a partial parse would silently invent a tag list.
-        assert parse_tag_array('["ok", ["nested"]]') == []
 
 
 class TestGetClient:
-    def test_mock_needs_no_key(self):
-        assert isinstance(get_client("mock"), MockVLM)
+    def test_anthropic_is_the_only_provider_and_its_model_is_priced(self):
+        # The default must be a model evaluation.runstats can price, or cost
+        # per task silently reports "unpriced" on every real run.
+        from evaluation.runstats import price_for
+        assert PROVIDERS == ["anthropic"]
+        assert price_for(DEFAULT_MODEL) is not None
 
-    def test_openai_compatible_providers_carry_a_base_url(self, monkeypatch):
-        for name, cfg in OPENAI_COMPATIBLE.items():
-            if name == "openai":
-                continue                      # OpenAI itself uses the default
-            monkeypatch.setenv(cfg["key_env"], "test-key")
-            client = get_client(name)
-            assert cfg["base_url"] in str(client._client.base_url)
-
-    def test_missing_key_names_the_variable(self, monkeypatch):
-        monkeypatch.delenv("XAI_API_KEY", raising=False)
-        try:
-            get_client("xai")
-        except RuntimeError as exc:
-            assert "XAI_API_KEY" in str(exc)
-        else:
-            raise AssertionError("expected a RuntimeError naming the variable")
-
-    def test_unknown_provider_lists_the_valid_ones(self):
-        try:
-            get_client("gemini")
-        except ValueError as exc:
-            assert "anthropic" in str(exc) and "mock" in str(exc)
-        else:
-            raise AssertionError("expected a ValueError")
-
-    def test_providers_list_matches_the_factory(self):
-        assert set(PROVIDERS) == {"anthropic", "mock", *OPENAI_COMPATIBLE}
+    def test_a_removed_provider_says_so(self):
+        for gone in ("mock", "openai", "xai", "groq", "ollama", "gemini"):
+            with pytest.raises(ValueError, match="Claude only"):
+                get_client(gone)
 
 
 class TestParseReasons:
@@ -125,22 +80,17 @@ class TestParseReasons:
         "colour: three colourways are shown\n"
         '["front angle", "colour"]')
 
-    def test_reads_a_reason_per_tag(self):
+    def test_reads_a_reason_per_tag_without_disturbing_the_array(self):
         assert parse_reasons(self.ANSWER) == {
             "front angle": "the TV is photographed face on",
             "colour": "three colourways are shown"}
-
-    def test_the_answer_array_still_parses_alongside_reasons(self):
         assert parse_tag_array(self.ANSWER) == ["front angle", "colour"]
 
-    def test_accepts_bulleted_and_numbered_lines(self):
-        reasons = parse_reasons("- camera - a lens is visible\n"
-                                "2. colour - two finishes shown")
-        assert reasons == {"camera": "a lens is visible",
-                           "colour": "two finishes shown"}
-
-    def test_reads_a_general_and_its_specific_from_one_line(self):
-        # What Haiku actually writes when a Specific needs its General.
+    def test_accepts_the_shapes_the_model_actually_writes(self):
+        assert parse_reasons("- camera - a lens is visible\n"
+                             "2. colour - two finishes shown") == {
+            "camera": "a lens is visible", "colour": "two finishes shown"}
+        # A Specific written alongside its General, on one line.
         reasons = parse_reasons(
             "feature graphics: camera - a ZEISS lens is called out")
         assert reasons["camera"] == "a ZEISS lens is called out"
@@ -151,23 +101,41 @@ class TestParseReasons:
             "colour - three finishes - black, white, green - are shown")
         assert list(reasons) == ["colour"], "only real tags may be nested"
 
-    def test_a_plain_answer_has_no_reasons(self):
-        assert parse_reasons('["physical design"]') == {}
-
-    def test_ignores_prose_that_is_not_a_reason_line(self):
-        assert parse_reasons("Here is my analysis of the image.") == {}
-
-    def test_survives_an_empty_response(self):
-        assert parse_reasons("") == {}
+    def test_an_answer_with_no_reasons_yields_none(self):
+        for text in ('["physical design"]', "Here is my analysis.", ""):
+            assert parse_reasons(text) == {}
 
 
-class TestMockPredict:
-    def test_the_mock_client_reasons_too(self):
-        pred = MockVLM().predict("b64", "image/jpeg", context="Category: TV")
-        assert pred.tags == ["physical design", "front angle"]
-        assert set(pred.reasons) == set(pred.tags)
+REASONED_ANSWER = (
+    "front angle - the TV is photographed face on\n"
+    "colour - three finishes are shown\n"
+    "Category: TV\n"
+    "Model: XR-65A95K\n"
+    "Description: A 65-inch OLED television shown face on in three finishes.\n"
+    "Specs: 65-inch, OLED, 4K, XR Processor\n"
+    '["front angle", "colour"]')
 
-    def test_predict_tags_is_unchanged(self):
-        assert MockVLM().predict_tags("b64", "image/jpeg",
-                                      context="Category: TV") == [
-            "physical design", "front angle"]
+
+class TestParseDetails:
+    """The four facts the tag vocabulary cannot express, read from the same
+    answer as the tags."""
+
+    def test_a_whole_answer_parses_into_one_prediction(self):
+        pred = Prediction.from_text(REASONED_ANSWER)
+        assert pred.tags == ["front angle", "colour"]
+        assert parse_tag_array(REASONED_ANSWER) == pred.tags
+        assert pred.product == "XR-65A95K" and pred.category == "TV"
+        assert pred.description.startswith("A 65-inch OLED")
+        assert pred.specs == "65-inch, OLED, 4K, XR Processor"
+        assert set(pred.reasons) == {"front angle", "colour"}, \
+            "a detail line is a fact about the product, not a tag reason"
+
+    def test_unknown_and_none_are_left_empty(self):
+        # A cell reading "unknown" is worse than an empty one.
+        details = parse_details("Model: unknown\nSpecs: none\nCategory: TV")
+        assert "model" not in details and "specs" not in details
+        assert details["category"] == "TV"
+
+    def test_survives_a_bolded_label_and_ignores_a_plain_answer(self):
+        assert parse_details("**Category:** Mobile")["category"] == "Mobile"
+        assert parse_details('["physical design"]') == {}

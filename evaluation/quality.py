@@ -5,9 +5,13 @@ Train images are named like:
     ['physical design', 'side angle', 'top'].jpg
 
 so every training image is a free labelled example. We parse those tags, run
-the agent on the same images, and report standard multi-label metrics.
-Metrics are computed by hand (set arithmetic) to avoid a heavy sklearn
-dependency and to make exactly what we measure explicit.
+the agent on the same images, and score it on two multi-label metrics:
+micro-F1 and macro-F1. They are computed by hand (set arithmetic) to avoid a
+heavy sklearn dependency and to make exactly what we measure explicit.
+
+Scoring is leave-one-out: with `--few-shot`, the image being scored is dropped
+from its own example list, so the model is never shown the answer it is being
+asked for.
 """
 from __future__ import annotations
 
@@ -36,10 +40,13 @@ if TYPE_CHECKING:
 #      dataset that floor is high: 'physical design' appears in every label.
 #   2. Micro-F1 >= 0.75. Tags feed a human review queue, so pooled per-tag
 #      correctness matters more than getting whole sets exactly right.
-#   3. Exact-match >= 0.40, i.e. a reviewer can accept about four in ten
-#      suggestions untouched.
+#   3. Macro-F1 >= 0.40. Micro-F1 is dominated by the handful of tags that
+#      appear on almost every image, so it can look healthy while the rare
+#      tags -- the ones worth surfacing to a content creator -- are never
+#      predicted at all. Macro-F1 weights every tag equally and is the number
+#      that falls when that happens.
 TARGET_MICRO_F1 = 0.75
-TARGET_EXACT_MATCH = 0.40
+TARGET_MACRO_F1 = 0.40
 
 
 # --------------------------- baselines --------------------------------------
@@ -77,26 +84,25 @@ def baseline_predictions(truth: list[list[str]]) -> dict[str, list[list[str]]]:
 
 @dataclass
 class Metrics:
+    """Two headline numbers, and the per-tag table macro-F1 is averaged from.
+
+    Two, not eight: precision and recall on their own invite reading whichever
+    half flatters the run, and Jaccard and exact-match say much the same thing
+    as micro-F1 about whole-image overlap. Micro-F1 answers "are the tags
+    right", macro-F1 answers "on the rare tags too", and per_tag is where you
+    look when either one drops.
+    """
+
     n: int
-    micro_precision: float
-    micro_recall: float
-    micro_f1: float
-    macro_precision: float
-    macro_recall: float
-    macro_f1: float
-    jaccard: float          # sample-averaged |intersection| / |union|
-    exact_match: float      # fraction of images tagged exactly right
+    micro_f1: float         # pooled over every (image, tag) decision
+    macro_f1: float         # mean per-tag F1, every tag weighted equally
     per_tag: dict           # tag -> {support, precision, recall, f1}
 
     def summary(self) -> str:
         return (
             f"Images evaluated : {self.n}\n"
-            f"Micro  P/R/F1    : {self.micro_precision:.3f} / "
-            f"{self.micro_recall:.3f} / {self.micro_f1:.3f}\n"
-            f"Macro  P/R/F1    : {self.macro_precision:.3f} / "
-            f"{self.macro_recall:.3f} / {self.macro_f1:.3f}\n"
-            f"Jaccard (avg)    : {self.jaccard:.3f}\n"
-            f"Exact-match      : {self.exact_match:.3f}"
+            f"Micro-F1         : {self.micro_f1:.3f}\n"
+            f"Macro-F1         : {self.macro_f1:.3f}"
         )
 
 
@@ -116,10 +122,11 @@ def compute_metrics(truth: list[list[str]],
     micro_p = tp / (tp + fp) if (tp + fp) else 0.0
     micro_r = tp / (tp + fn) if (tp + fn) else 0.0
 
-    # Per-tag stats, then macro-average over tags seen in ground truth.
+    # Per-tag stats, which the macro average is then taken over.
     labels = sorted({t for s in truth_sets for t in s} |
                     {p for s in pred_sets for p in s})
     per_tag: dict = {}
+    tag_f1: list[float] = []      # unrounded, so the macro average is exact
     for lab in labels:
         l_tp = sum((lab in t) and (lab in p)
                    for t, p in zip(truth_sets, pred_sets))
@@ -130,22 +137,24 @@ def compute_metrics(truth: list[list[str]],
         support = sum(lab in t for t in truth_sets)
         p = l_tp / (l_tp + l_fp) if (l_tp + l_fp) else 0.0
         r = l_tp / (l_tp + l_fn) if (l_tp + l_fn) else 0.0
+        tag_f1.append(_f1(p, r))
         per_tag[lab] = {"support": support, "precision": round(p, 3),
-                        "recall": round(r, 3), "f1": round(_f1(p, r), 3)}
+                        "recall": round(r, 3), "f1": round(tag_f1[-1], 3)}
 
-    seen = [lab for lab in labels if per_tag[lab]["support"] > 0]
-    macro_p = sum(per_tag[l]["precision"] for l in seen) / len(seen) if seen else 0.0
-    macro_r = sum(per_tag[l]["recall"] for l in seen) / len(seen) if seen else 0.0
-
-    jaccard = sum(len(t & p) / len(t | p) if (t | p) else 1.0
-                  for t, p in zip(truth_sets, pred_sets)) / len(truth_sets)
-    exact = sum(t == p for t, p in zip(truth_sets, pred_sets)) / len(truth_sets)
+    # Mean of the per-tag F1s, over every tag in the truth or the prediction.
+    # Both halves of that matter. Averaging the F1s rather than F1-ing the
+    # averaged precision and recall is the standard definition, and the two do
+    # not agree. Including tags with no support is what makes the number
+    # honest: a tag the model predicts on every image and is never right about
+    # scores F1 0.0 and must be averaged in, otherwise a model that spams one
+    # wrong in-vocabulary tag still macro-scores a perfect 1.000.
+    macro_f1 = sum(tag_f1) / len(tag_f1) if tag_f1 else 0.0
 
     return Metrics(
         n=len(truth_sets),
-        micro_precision=micro_p, micro_recall=micro_r, micro_f1=_f1(micro_p, micro_r),
-        macro_precision=macro_p, macro_recall=macro_r, macro_f1=_f1(macro_p, macro_r),
-        jaccard=jaccard, exact_match=exact, per_tag=per_tag,
+        micro_f1=_f1(micro_p, micro_r),
+        macro_f1=macro_f1,
+        per_tag=per_tag,
     )
 
 
@@ -188,11 +197,11 @@ def failure_warning(records: list[dict]) -> str:
 def format_comparison(scored: dict[str, Metrics]) -> str:
     """Render the agent-vs-baseline table, with an explicit verdict."""
     width = max(len(n) for n in scored)
-    lines = [f"{'':<{width}}   micro-F1   Jaccard   exact",
-             "-" * (width + 30)]
+    lines = [f"{'':<{width}}   micro-F1   macro-F1",
+             "-" * (width + 22)]
     for name, m in scored.items():
         lines.append(f"{name:<{width}}   {m.micro_f1:>8.3f}   "
-                     f"{m.jaccard:>7.3f}   {m.exact_match:>5.3f}")
+                     f"{m.macro_f1:>8.3f}")
     agent = scored["agent"]
     best = max((m.micro_f1 for n, m in scored.items() if n != "agent"),
                default=0.0)
@@ -200,10 +209,10 @@ def format_comparison(scored: dict[str, Metrics]) -> str:
     lines.append(f"Beats best baseline : "
                  f"{'YES' if agent.micro_f1 > best else 'NO'} "
                  f"({agent.micro_f1:.3f} vs {best:.3f})")
-    lines.append(f"Micro-F1 >= {TARGET_MICRO_F1:.2f}     : "
+    lines.append(f"Micro-F1 >= {TARGET_MICRO_F1:.2f}    : "
                  f"{'YES' if agent.micro_f1 >= TARGET_MICRO_F1 else 'NO'}")
-    lines.append(f"Exact-match >= {TARGET_EXACT_MATCH:.2f}  : "
-                 f"{'YES' if agent.exact_match >= TARGET_EXACT_MATCH else 'NO'}")
+    lines.append(f"Macro-F1 >= {TARGET_MACRO_F1:.2f}    : "
+                 f"{'YES' if agent.macro_f1 >= TARGET_MACRO_F1 else 'NO'}")
     return "\n".join(lines)
 
 
@@ -233,7 +242,7 @@ def evaluate(root: str, client: VLMClient, sample: int | None = None,
     for i, (path, gt) in enumerate(data, 1):
         ctx = _infer_context(path)
         if stats:
-            stats.record_image()
+            stats.record_task()
         examples = (load_examples(root, limit=few_shot, exclude=path)
                     if few_shot else None)
         try:
@@ -246,6 +255,8 @@ def evaluate(root: str, client: VLMClient, sample: int | None = None,
             if stats:
                 stats.record_failure()
             print(f"  ! {os.path.basename(path)}: {exc}")
+        if stats:
+            stats.record_outcome(len(got))
         truth.append(gt)
         pred.append(got)
         record = {"path": path, "truth": gt, "predicted": got}

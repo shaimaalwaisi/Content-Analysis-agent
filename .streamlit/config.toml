@@ -1,0 +1,12 @@
+# Read when the app is started from the repo root, as the README says:
+#
+#     streamlit run app/streamlit_app.py
+
+[theme]
+# The root size everything else is a multiple of. Streamlit's own default is
+# 16, and the parts that read as fine print -- the results table, and every
+# widget label, the uploader's included -- are not 16 but `sm`, 0.875rem. So
+# they only grow by moving the root: at 18 they land at 15.75px. The table is
+# drawn on a canvas and takes its font from the theme, so CSS cannot reach it
+# and this can.
+baseFontSize = 18

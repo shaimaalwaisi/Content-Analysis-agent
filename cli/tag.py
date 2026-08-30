@@ -56,7 +56,9 @@ def run(args) -> None:
     memory = build_memory(args)
     store = build_store(args)
     run_id = new_run_id() if store else None
-    stats = RunStats()
+    # The model id is what prices the run, so RunStats is told which one
+    # answered rather than left to guess from the provider name.
+    stats = RunStats(model_id=getattr(client, "model", ""))
     results = run_folder(args.input, client, limit=args.limit,
                          on_item=progress, examples=examples, memory=memory,
                          workers=args.workers,
@@ -70,14 +72,20 @@ def run(args) -> None:
               f"-- view them in the Results tab of the Streamlit app")
         store.close()
 
+    consistency = _consistency(args, client, results) if args.consistency \
+        else None
+
     records = results_to_dicts(results)
 
-    run_path = write_run("tag", args, {
+    payload = {
         "images": len(records),
         "workflow": stats.as_dict(),
         "tag_counts": _tag_counts(records),
         "results": records,
-    })
+    }
+    if consistency:
+        payload["consistency"] = consistency.as_dict()
+    run_path = write_run("tag", args, payload)
     if run_path:
         print(f"Run record: {run_path}")
 
@@ -86,6 +94,40 @@ def run(args) -> None:
         print(f"\nWrote {len(records)} results to {args.output}")
     else:
         print(json.dumps(records, indent=2))
+
+
+def _consistency(args, client, first):
+    """Tag the same folder a second time and score the two passes against
+    each other.
+
+    Two things make the second pass an independent opinion rather than an echo
+    of the first: a different draw of few-shot examples, and no memory. Without
+    the second, an identical request would be served from the tag cache and
+    every image would score a perfect 1.000 -- a number that measures the
+    cache, not the model. The second pass also writes nothing to the results
+    database: it exists to be compared, not to be shown to a content creator.
+    """
+    from agent.fewshot import load_examples
+    from evaluation.consistency import compare_passes
+
+    # Rotating the examples is what varies the question. With --few-shot 0
+    # there are no examples to vary, so the only difference between the passes
+    # is the model's own nondeterminism, which is a weaker test -- say so.
+    examples = (load_examples(args.train_dir, limit=args.few_shot, seed=17)
+                if args.few_shot else None)
+    print(f"\nSecond pass for self-consistency ({len(first)} more model "
+          f"call(s), which doubles the cost of this run)...")
+    if not args.few_shot:
+        print("  Note: with --few-shot 0 both passes ask exactly the same "
+              "question, so this measures only the model's nondeterminism.")
+
+    second = run_folder(args.input, client, limit=args.limit,
+                        examples=examples, memory=None,
+                        workers=args.workers,
+                        search_tool=build_search_tool(args))
+    report = compare_passes(first, second)
+    print(f"\n{report.summary()}")
+    return report
 
 
 def add_parser(sub) -> None:
@@ -100,6 +142,10 @@ def add_parser(sub) -> None:
                    help="prepend N labelled training images as examples")
     p.add_argument("--train-dir", default="data/train",
                    help="where --few-shot examples come from")
+    p.add_argument("--consistency", action="store_true",
+                   help="tag everything a second time with different examples "
+                        "and score the agreement. Doubles the cost; needs no "
+                        "labels, so it works on the test set.")
     add_provider_args(p)
     add_memory_args(p)
     add_enrich_args(p)

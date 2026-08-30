@@ -42,6 +42,8 @@ class Tagging:
     rationale: dict[str, str] = field(default_factory=dict)
     category: str = ""
     product: str = ""
+    description: str = ""
+    specs: str = ""
     model: str = ""
     attempts: int = 1
     cached: bool = False
@@ -77,9 +79,19 @@ class ResultStore:
             "  highlights TEXT NOT NULL,"   # JSON list
             "  tags TEXT NOT NULL,"         # JSON list
             "  rationale TEXT NOT NULL,"    # JSON object, tag -> why
+            "  description TEXT,"
+            "  specs TEXT,"
             "  model TEXT,"
             "  attempts INTEGER,"
             "  cached INTEGER)")
+        # Databases written before description and specs existed are still
+        # readable; adding the columns is cheaper than asking for a re-run.
+        existing = {row[1] for row in
+                    self._conn.execute("PRAGMA table_info(taggings)")}
+        for column in ("description", "specs"):
+            if column not in existing:
+                self._conn.execute(
+                    f"ALTER TABLE taggings ADD COLUMN {column} TEXT")
         # A re-run of the same image inside one run replaces its row rather
         # than doubling it, so 10 images always render as 10 rows.
         self._conn.execute(
@@ -92,19 +104,20 @@ class ResultStore:
             self._conn.execute(
                 "INSERT INTO taggings (run_id, created, image_name, "
                 " image_path, category, product, highlights, tags, rationale,"
-                " model, attempts, cached) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                " description, specs, model, attempts, cached) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (run_id, image_path) DO UPDATE SET "
                 " created=excluded.created, highlights=excluded.highlights,"
                 " tags=excluded.tags, rationale=excluded.rationale,"
                 " category=excluded.category, product=excluded.product,"
+                " description=excluded.description, specs=excluded.specs,"
                 " model=excluded.model, attempts=excluded.attempts,"
                 " cached=excluded.cached",
                 (row.run_id, row.created or time.time(), row.image_name,
                  row.image_path, row.category, row.product,
                  json.dumps(row.highlights), json.dumps(row.tags),
-                 json.dumps(row.rationale), row.model, row.attempts,
-                 int(row.cached)))
+                 json.dumps(row.rationale), row.description, row.specs,
+                 row.model, row.attempts, int(row.cached)))
             self._conn.commit()
             self.writes += 1
 

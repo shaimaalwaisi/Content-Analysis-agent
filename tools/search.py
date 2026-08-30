@@ -5,12 +5,15 @@ photo reveals whether the model won an `award`, appeared in a `benchmark`, or
 carries an `energy rating` -- that knowledge lives outside the image. The
 enrich node closes that gap by looking the product up.
 
-Two backends ship, behind one protocol, mirroring `vlm.py`:
+Two backends ship, behind one protocol:
 
-* MockSearchTool      - offline, deterministic; no key, no network
 * AnthropicWebSearch  - Claude's server-side web_search tool: the search runs
                         on Anthropic's infrastructure, so there is no separate
                         search provider, key, or client-side execution loop
+* MockSearchTool      - offline, deterministic; no key, no network. This is
+                        the one stand-in the project keeps: without it the
+                        enrich path could not be tested or demonstrated at
+                        all, since it needs live web results to do anything.
 
 Whatever a tool returns is only ever a *suggestion*: enrichment adds candidate
 tags, and `validate_tags` still decides what survives. A tool cannot put a tag
@@ -22,11 +25,12 @@ import os
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from agent.tools_types import SearchResult
-
+from agent.enrichment import SearchResult
 from agent.logconf import get_logger
+from agent.vlm import DEFAULT_MODEL
 
 log = get_logger(__name__)
+
 
 class SearchTool(Protocol):
     def search(self, query: str) -> list[SearchResult]:
@@ -76,7 +80,7 @@ class AnthropicWebSearch:
     loop to write here.
     """
 
-    model: str = "claude-haiku-4-5-20251001"
+    model: str = DEFAULT_MODEL
     max_uses: int = 3
     max_tokens: int = 1024
     allowed_domains: list[str] | None = None
@@ -154,5 +158,5 @@ def get_search_tool(name: str, model: str | None = None) -> SearchTool:
     if name == "mock":
         return MockSearchTool()
     if name in ("anthropic", "web"):
-        return AnthropicWebSearch(model=model or "claude-haiku-4-5-20251001")
+        return AnthropicWebSearch(model=model or DEFAULT_MODEL)
     raise ValueError(f"Unknown search tool: {name!r}. Choose: mock, anthropic")

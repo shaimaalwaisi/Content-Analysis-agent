@@ -62,6 +62,17 @@ class TagMemory:
         self._conn.commit()
 
     def get(self, key: str) -> list[str] | None:
+        """The remembered tags, or None on a miss."""
+        record = self.get_record(key)
+        return None if record is None else record["tags"]
+
+    def get_record(self, key: str) -> dict | None:
+        """The whole remembered answer: tags, reasons and details.
+
+        Rows written before the answer grew past a tag list hold a JSON array
+        rather than an object; they are read as tags with nothing else, so an
+        existing cache keeps working and simply explains less.
+        """
         with self._lock:
             row = self._conn.execute(
                 "SELECT tags FROM tags WHERE key = ?", (key,)).fetchone()
@@ -69,14 +80,27 @@ class TagMemory:
                 self.misses += 1
                 return None
             self.hits += 1
-            return json.loads(row[0])
+        stored = json.loads(row[0])
+        if isinstance(stored, list):
+            return {"tags": stored, "rationale": {}, "details": {}}
+        return {"tags": stored.get("tags", []),
+                "rationale": stored.get("rationale", {}),
+                "details": stored.get("details", {})}
 
-    def put(self, key: str, tags: list[str], model: str = "") -> None:
+    def put(self, key: str, tags: list[str], model: str = "",
+            rationale: dict | None = None, details: dict | None = None
+            ) -> None:
+        """Remember an answer. Reasons and details are stored alongside the
+        tags so a cache hit replays the whole row a results table needs, not
+        just the tags -- otherwise a repeated image loses its description."""
+        payload = (json.dumps(tags) if rationale is None and details is None
+                   else json.dumps({"tags": tags, "rationale": rationale or {},
+                                    "details": details or {}}))
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO tags (key, tags, model, created) "
                 "VALUES (?, ?, ?, ?)",
-                (key, json.dumps(tags), model, time.time()))
+                (key, payload, model, time.time()))
             self._conn.commit()
 
     def size(self) -> int:

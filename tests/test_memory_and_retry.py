@@ -36,43 +36,50 @@ class TestMakeKey:
     def test_same_inputs_give_the_same_key(self):
         assert make_key(*self.BASE) == make_key(*self.BASE)
 
-    def test_key_changes_with_the_image(self):
-        assert make_key("other", "model-1", "Category: TV") != make_key(*self.BASE)
+    def test_every_input_that_changes_the_answer_changes_the_key(self):
+        # Each of these would otherwise replay an answer produced under
+        # different conditions -- another model's, another prompt's.
+        base = make_key(*self.BASE)
+        assert make_key("other", "model-1", "Category: TV") != base
+        assert make_key("b64data", "model-2", "Category: TV") != base
+        assert make_key("b64data", "model-1", "Category: Mobile") != base
+        assert make_key(*self.BASE, extra="enrich") != base
 
-    def test_key_changes_with_the_model(self):
-        # Otherwise switching provider would replay another model's answers.
-        assert make_key("b64data", "model-2", "Category: TV") != make_key(*self.BASE)
-
-    def test_key_changes_with_the_context(self):
-        assert make_key("b64data", "model-1", "Category: Mobile") != make_key(*self.BASE)
-
-    def test_key_changes_with_few_shot_examples(self):
-        examples = [("ex", "image/jpeg", ["physical design"])]
-        assert make_key(*self.BASE, examples=examples) != make_key(*self.BASE)
-
-    def test_key_changes_with_enrichment(self):
-        # An enriched answer must never be served from a plain run's cache.
-        assert make_key(*self.BASE, extra="enrich") != make_key(*self.BASE)
-
-    def test_example_order_and_content_matter(self):
+    def test_few_shot_examples_are_part_of_the_key(self):
         a = [("x", "image/jpeg", ["colour"])]
         b = [("y", "image/jpeg", ["colour"])]
-        assert make_key(*self.BASE, examples=a) != make_key(*self.BASE, examples=b)
+        assert make_key(*self.BASE, examples=a) != make_key(*self.BASE)
+        assert make_key(*self.BASE, examples=a) != make_key(*self.BASE,
+                                                            examples=b)
 
 
 class TestTagMemory:
-    def test_miss_then_hit(self, memory):
+    def test_miss_then_hit_and_both_are_counted(self, memory):
         key = make_key("img", "m", None)
-        assert memory.get(key) is None
+        assert memory.get(key) is None                      # miss
         memory.put(key, ["physical design"], "m")
-        assert memory.get(key) == ["physical design"]
-
-    def test_counts_hits_and_misses(self, memory):
-        key = make_key("img", "m", None)
-        memory.get(key)                     # miss
-        memory.put(key, ["colour"], "m")
-        memory.get(key)                     # hit
+        assert memory.get(key) == ["physical design"]       # hit
         assert (memory.hits, memory.misses) == (1, 1)
+
+    def test_remembers_the_whole_answer_not_just_the_tags(self, memory):
+        # A cache hit fills the same results row as a fresh answer, so the
+        # description and specs must survive alongside the tags.
+        memory.put("k", ["colour"], "m",
+                   rationale={"colour": "three finishes"},
+                   details={"description": "A phone in three finishes.",
+                            "specs": "5000mAh", "category": "Mobile",
+                            "product": "XPERIA1MK5"})
+        record = memory.get_record("k")
+        assert record["tags"] == ["colour"]
+        assert record["rationale"] == {"colour": "three finishes"}
+        assert record["details"]["specs"] == "5000mAh"
+        assert memory.get("k") == ["colour"], "the plain read is unchanged"
+
+    def test_reads_a_cache_written_before_details_existed(self, memory):
+        memory.put("k", ["colour"], "m")          # the old shape: a bare list
+        record = memory.get_record("k")
+        assert record["tags"] == ["colour"]
+        assert record["rationale"] == {} and record["details"] == {}
 
     def test_survives_reopening_the_file(self, tmp_path):
         path = str(tmp_path / "persist.sqlite3")
@@ -97,14 +104,9 @@ class TestTagMemory:
 
 
 class TestIsTransient:
-    def test_rate_limits_and_server_errors_are_transient(self):
-        assert is_transient(ServerError())
-        assert is_transient(RateLimitError())
-
-    def test_client_errors_are_not(self):
+    def test_only_rate_limits_and_server_errors_are_transient(self):
+        assert is_transient(ServerError()) and is_transient(RateLimitError())
         assert not is_transient(BadRequestError())
-
-    def test_unknown_exceptions_are_not(self):
         assert not is_transient(ValueError("nope"))
 
 
@@ -112,8 +114,8 @@ class TestCallWithRetry:
     def test_returns_on_first_success(self):
         assert call_with_retry(lambda: "ok", sleep=lambda _s: None) == "ok"
 
-    def test_retries_transient_then_succeeds(self):
-        state = {"n": 0}
+    def test_retries_transient_then_succeeds_and_reports_each_retry(self):
+        state, seen = {"n": 0}, []
 
         def flaky():
             state["n"] += 1
@@ -121,8 +123,10 @@ class TestCallWithRetry:
                 raise RateLimitError("slow down")
             return "ok"
 
-        assert call_with_retry(flaky, sleep=lambda _s: None) == "ok"
+        assert call_with_retry(flaky, on_retry=seen.append,
+                               sleep=lambda _s: None) == "ok"
         assert state["n"] == 3
+        assert len(seen) == 2, "two failures means two retry callbacks"
 
     def test_non_transient_raises_immediately(self):
         state = {"n": 0}
@@ -145,16 +149,3 @@ class TestCallWithRetry:
         with pytest.raises(RateLimitError):
             call_with_retry(always, attempts=3, sleep=lambda _s: None)
         assert state["n"] == 3
-
-    def test_on_retry_fires_once_per_retry(self):
-        seen = []
-        state = {"n": 0}
-
-        def flaky():
-            state["n"] += 1
-            if state["n"] < 3:
-                raise RateLimitError("x")
-            return "ok"
-
-        call_with_retry(flaky, on_retry=seen.append, sleep=lambda _s: None)
-        assert len(seen) == 2, "two failures means two retry callbacks"

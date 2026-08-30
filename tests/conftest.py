@@ -2,8 +2,9 @@
 
 Two rules the whole suite follows:
 
-* No network. Every test uses a stub or the mock client, so `pytest` never
-  spends money and never fails because a provider is down.
+* No network. Every test drives the agent with `StubVLM` below, so `pytest`
+  never spends money, needs no API key, and never fails because a provider is
+  down. Nothing in the suite constructs a real client.
 * No dependency on the dataset. The image files are gitignored, so fixtures
   synthesise images rather than reading `data/`; a fresh clone can run the
   tests immediately.

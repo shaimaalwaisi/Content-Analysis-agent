@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Optional, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from .evidence import tags_from_evidence
+from .enrichment import tags_from_evidence
 from .logconf import get_logger
 from .memory import TagMemory, make_key
 from .prompts import build_feedback
@@ -60,6 +60,10 @@ class TagState(TypedDict, total=False):
     media_type: str
     raw_tags: list[str]             # what the model said
     rationale: dict                 # tag -> the model's reason for it
+    description: str                # one line: what the image shows
+    specs: str                      # figures the model could read in the image
+    seen_category: str              # the category the model recognised
+    seen_product: str               # the model name it could read
     evidence: list                  # search results backing non-visual tags
     dropped: list[str]              # tags rejected by the vocabulary
     feedback: Optional[str]         # what to tell the model on a second pass
@@ -126,7 +130,11 @@ def build_graph(client: VLMClient, memory: TagMemory | None = None,
     def prepare(state: TagState) -> TagState:
         """Read the image, work out the context, ask memory."""
         path = state["image_path"]
+        started = time.perf_counter()
         b64, media = encode_image(path)
+        if stats:
+            stats.record_action("encode",
+                                (time.perf_counter() - started) * 1000)
         ctx = state.get("context") or _infer_context(path) or None
         out: TagState = {"image_b64": b64, "media_type": media, "context": ctx,
                          "attempt": 0, "cached": False}
@@ -135,29 +143,37 @@ def build_graph(client: VLMClient, memory: TagMemory | None = None,
         key = make_key(b64, model_id, ctx, state.get("examples"),
                        extra="enrich" if search_tool else "")
         out["cache_key"] = key
-        hit = memory.get(key)
+        hit = memory.get_record(key)
         if hit is not None:
-            log.info("memory_hit", extra={"image": path, "n_tags": len(hit)})
+            log.info("memory_hit", extra={"image": path,
+                                          "n_tags": len(hit["tags"])})
             if stats:
                 stats.record_cache_hit()
-            out.update({"cached": True, "tags": hit})
+            details = hit.get("details") or {}
+            out.update({"cached": True, "tags": hit["tags"],
+                        "rationale": hit.get("rationale") or {},
+                        "description": details.get("description", ""),
+                        "specs": details.get("specs", ""),
+                        "seen_category": details.get("category", ""),
+                        "seen_product": details.get("product", "")})
         return out
 
-    def _call_model(state: TagState) -> tuple[list[str], dict]:
-        """One model call. Clients that support reasons return them; a plain
-        client (a test stub, or anything implementing only the protocol's
-        predict_tags) still works and simply has nothing to explain."""
+    def _call_model(state: TagState):
+        """One model call. Clients that support it return reasons and the
+        details a results table needs; a plain client (a test stub, or
+        anything implementing only the protocol's predict_tags) still works
+        and simply has nothing to explain."""
+        from .vlm import Prediction
         predict = getattr(client, "predict", None)
         if predict is None:
             tags = client.predict_tags(
                 state["image_b64"], state["media_type"],
                 context=state.get("context"), examples=state.get("examples"))
-            return list(tags), {}
-        pred = predict(state["image_b64"], state["media_type"],
+            return Prediction(list(tags))
+        return predict(state["image_b64"], state["media_type"],
                        context=state.get("context"),
                        examples=state.get("examples"),
                        feedback=state.get("feedback"))
-        return list(pred.tags), dict(pred.reasons)
 
     def _enrich(state: TagState) -> tuple[list[str], list]:
         """Look the product up to justify tags the image cannot show.
@@ -210,8 +226,9 @@ def build_graph(client: VLMClient, memory: TagMemory | None = None,
     def analyze_image(state: TagState) -> TagState:
         """Reason, act, check: ask the model, enrich, enforce the vocabulary."""
         started = time.perf_counter()
-        raw, reasons = call_with_retry(lambda: _call_model(state),
-                                       attempts=attempts, on_retry=_retry)
+        pred = call_with_retry(lambda: _call_model(state),
+                               attempts=attempts, on_retry=_retry)
+        raw, reasons = list(pred.tags), dict(pred.reasons)
         log.info("model_call", extra={
             "image": state["image_path"], "model": model_id,
             "ms": round((time.perf_counter() - started) * 1000),
@@ -219,7 +236,7 @@ def build_graph(client: VLMClient, memory: TagMemory | None = None,
             "n_examples": len(state.get("examples") or [])})
         if stats:
             stats.record_model_call((time.perf_counter() - started) * 1000,
-                                    len(raw))
+                                    pred.input_tokens, pred.output_tokens)
 
         evidence = []
         if search_tool is not None:
@@ -229,14 +246,16 @@ def build_graph(client: VLMClient, memory: TagMemory | None = None,
         kept, dropped = _validate(raw)
         if dropped:
             # Out-of-vocabulary predictions are the signal to watch in
-            # production: a rising rate means prompt or taxonomy drift.
+            # production: a rising rate means prompt or taxonomy drift. It is
+            # logged rather than counted -- the run metrics are the three in
+            # `evaluation`, and this is an observability signal, not a fourth.
             log.warning("out_of_vocab_tags", extra={
                 "image": state["image_path"], "dropped": dropped,
                 "kept": kept})
-        if stats:
-            stats.record_dropped(len(dropped))
         return {"raw_tags": raw, "tags": kept, "dropped": dropped,
-                "evidence": evidence,
+                "evidence": evidence, "description": pred.description,
+                "specs": pred.specs, "seen_category": pred.category,
+                "seen_product": pred.product,
                 # Only reasons for tags that survived: an explanation for a
                 # rejected tag is an explanation of something that never
                 # happened.
@@ -268,16 +287,27 @@ def build_graph(client: VLMClient, memory: TagMemory | None = None,
         tags = state.get("tags", [])
         if memory is not None and state.get("cache_key") \
                 and not state.get("cached"):
-            memory.put(state["cache_key"], tags, model_id)
+            memory.put(state["cache_key"], tags, model_id,
+                       rationale=state.get("rationale", {}),
+                       details={"description": state.get("description", ""),
+                                "specs": state.get("specs", ""),
+                                "category": state.get("seen_category", ""),
+                                "product": state.get("seen_product", "")})
         if store is not None:
             from tools import Tagging      # the core never imports tools at
             batch = state.get("run_id") or run_id  # import time
+            # What we were told beats what the model reckons: the folder path
+            # (or the person at the keyboard) knows the product, while the
+            # model is reading a name off a photograph.
             category, product = _split_context(state.get("context"))
             store.put(Tagging(
                 run_id=batch or "adhoc", image_path=state["image_path"],
                 tags=tags, highlights=highlight_tags(tags),
-                rationale=state.get("rationale", {}), category=category,
-                product=product, model=model_id,
+                rationale=state.get("rationale", {}),
+                category=category or state.get("seen_category", ""),
+                product=product or state.get("seen_product", ""),
+                description=state.get("description", ""),
+                specs=state.get("specs", ""), model=model_id,
                 attempts=state.get("attempt", 0),
                 cached=bool(state.get("cached"))))
         return {}

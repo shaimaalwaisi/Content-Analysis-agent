@@ -3,14 +3,14 @@
 Two independent kinds of measurement live here, kept apart because they answer
 different questions and have different requirements:
 
-* `quality` -- tagging *quality* against ground-truth labels: precision,
-  recall, F1, Jaccard, exact match, per-tag support, plus the model-free
-  baselines and success criteria a score is judged against. Needs labels, so it
-  runs only on the labelled training images.
+* `quality` -- tagging *quality* against ground-truth labels: micro-F1 and
+  macro-F1, the per-tag table behind them, plus the model-free baselines and
+  success criteria a score is judged against. Needs labels, so it runs only on
+  the labelled training images.
 
-* `runstats` -- how the agent *behaves*: hallucination rate, latency
-  percentiles, cache and retry efficiency. Needs no labels, so it runs on the
-  unlabelled test set and in production.
+* `runstats` -- how the agent *behaves*: task success rate, cost per task and
+  latency per action. Needs no labels, so it runs on the unlabelled test set
+  and in production.
 
 Names are re-exported **lazily**. `graph` and `pipeline` import `RunStats` from
 here to instrument themselves, while `quality` imports `graph` to run the
@@ -20,8 +20,8 @@ name is actually used, which keeps the package a single front door without the
 cycle.
 
 Label parsing (`parse_tags_from_filename`, `load_labelled`) deliberately does
-NOT live here -- it is in `agent.labels`, because `fewshot`
-needs it too and the core package must not import this layer.
+NOT live here -- it is in `agent.labels`, because `fewshot` needs it too and
+the core package must not import this layer.
 
 The quality module is named `quality`, not `evaluate`: a submodule sets itself
 as an attribute of its package on import, so a submodule named `evaluate` would
@@ -32,7 +32,7 @@ from __future__ import annotations
 # name -> submodule that defines it
 _EXPORTS = {
     "Metrics": "quality",
-    "TARGET_EXACT_MATCH": "quality",
+    "TARGET_MACRO_F1": "quality",
     "TARGET_MICRO_F1": "quality",
     "baseline_predictions": "quality",
     "compare_baselines": "quality",
@@ -42,7 +42,10 @@ _EXPORTS = {
     "format_comparison": "quality",
     "median_label_size": "quality",
     "most_common_tags": "quality",
+    "ACTIONS": "runstats",
+    "PRICES_PER_MTOK": "runstats",
     "RunStats": "runstats",
+    "price_for": "runstats",
 }
 
 __all__ = sorted(_EXPORTS)

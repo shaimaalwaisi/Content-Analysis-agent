@@ -1,13 +1,15 @@
 """Vision-language model clients.
 
-A thin, swappable interface so the agent does not care which provider tags the
-image. Three implementations ship:
+A thin interface, so the agent does not care what is behind it. One
+implementation ships: `AnthropicVLM`, Claude vision on
+`claude-haiku-4-5-20251001`.
 
-* AnthropicVLM  - default, Claude vision (claude-haiku-4-5 by default)
-* OpenAIVLM     - any OpenAI-compatible vision endpoint: OpenAI itself, and
-                  equally xAI (Grok), Groq, or a local Ollama, which all speak
-                  the same wire format and differ only by base URL and key
-* MockVLM       - no network / no key; deterministic, for tests & offline demos
+One provider is a deliberate choice, not a limitation of the interface: the
+prompt is tuned for one model, the cost table prices one model, and a second
+vendor would double both without answering a question the brief asks. The
+`VLMClient` protocol below is still the seam -- adding a provider means adding
+a class, not editing the agent, and the test suite proves it by passing its
+own stub through the same protocol.
 
 Prompt wording lives in prompts.py; a client only sends the prompt with the
 image and extracts the model's answer. Validation against the taxonomy happens
@@ -31,7 +33,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from .prompts import build_tagging_prompt
+from .prompts import DETAIL_FIELDS, build_tagging_prompt
 
 # One example (image_b64, media_type, tags) for optional few-shot prompting.
 Example = tuple[str, str, list[str]]
@@ -78,6 +80,7 @@ def parse_reasons(text: str) -> dict[str, str]:
     def clean(value: str) -> str:
         return value.strip().rstrip(".")[:200]
 
+    labels = {f.lower() for f in DETAIL_FIELDS}
     reasons: dict[str, str] = {}
     for line in (text or "").splitlines():
         if line.lstrip().startswith("["):      # the answer array, not a reason
@@ -86,6 +89,8 @@ def parse_reasons(text: str) -> dict[str, str]:
         if not match:
             continue
         tag = " ".join(match.group("tag").lower().split())
+        if tag in labels:                      # "Category: Mobile" is a fact
+            continue                           # about the product, not a tag
         why = clean(match.group("why"))
         reasons.setdefault(tag, why)
         nested = _REASON_LINE.match(why)
@@ -96,12 +101,75 @@ def parse_reasons(text: str) -> dict[str, str]:
     return reasons
 
 
+# "Category: Mobile", "Specs: 5000mAh, ZEISS". Case-insensitive, because a
+# model that is asked for "Model:" will occasionally write "MODEL:".
+_DETAIL_LINE = re.compile(
+    r"^\s*\**\s*(?P<key>" + "|".join(DETAIL_FIELDS) + r")\s*\**\s*:\s*"
+    r"(?P<value>\S.*)$", re.IGNORECASE)
+
+# What the model writes when it has nothing to report; storing it verbatim
+# would put the word "unknown" in a table cell, where a gap reads better.
+_NOTHING = {"unknown", "none", "n/a", "na", "not shown", "not visible", "-"}
+
+
+def parse_details(text: str) -> dict[str, str]:
+    """Pull the labelled facts -- category, model, description, specs -- out
+    of a reasoned answer. Missing or empty fields are simply absent."""
+    out: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        match = _DETAIL_LINE.match(line)
+        if not match:
+            continue
+        value = match.group("value").strip().strip("*").strip()
+        if value.lower().rstrip(".") in _NOTHING:
+            continue
+        out.setdefault(match.group("key").lower(), value[:300])
+    return out
+
+
 @dataclass
 class Prediction:
-    """One model answer: the tags, and why it says it chose them."""
+    """One model answer: the tags, why it chose them, and what it read.
+
+    The details are what a results table needs and the tag vocabulary cannot
+    say -- which product this is, and what the image states about it.
+    """
 
     tags: list[str]
     reasons: dict[str, str] = field(default_factory=dict)
+    category: str = ""
+    product: str = ""
+    description: str = ""
+    specs: str = ""
+    # What the call was billed for. Zero when the provider reports no usage
+    # (the mock, a local server, a client implementing only predict_tags),
+    # which is why cost per task is reported as unpriced rather than as free.
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    @classmethod
+    def from_text(cls, text: str) -> "Prediction":
+        """Read a whole reasoned answer: tags, reasons and details."""
+        details = parse_details(text)
+        return cls(parse_tag_array(text), parse_reasons(text),
+                   category=details.get("category", ""),
+                   product=details.get("model", ""),
+                   description=details.get("description", ""),
+                   specs=details.get("specs", ""))
+
+
+def _with_usage(pred: "Prediction", resp) -> "Prediction":
+    """Copy the response's token counts onto the prediction, if it has any.
+
+    Read defensively: cost per task is a nice number to have, and losing a
+    whole tagging run because a response object was shaped unexpectedly would
+    be a poor trade.
+    """
+    usage = getattr(resp, "usage", None)
+    if usage is not None:
+        pred.input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        pred.output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    return pred
 
 
 class VLMClient(Protocol):
@@ -116,7 +184,7 @@ class AnthropicVLM:
     """Claude vision. Requires ANTHROPIC_API_KEY and `pip install anthropic`."""
 
     model: str = "claude-haiku-4-5-20251001"
-    max_tokens: int = 300
+    max_tokens: int = 500      # tags, a reason each, and four detail lines
 
     def __post_init__(self) -> None:
         from anthropic import Anthropic  # lazy: mock needs no dependency
@@ -145,120 +213,39 @@ class AnthropicVLM:
         resp = self._client.messages.create(
             model=self.model, max_tokens=self.max_tokens, messages=messages)
         text = "".join(b.text for b in resp.content if b.type == "text")
-        return Prediction(parse_tag_array(text), parse_reasons(text))
+        return _with_usage(Prediction.from_text(text), resp)
 
     def predict_tags(self, image_b64, media_type, context=None, examples=None):
         return self.predict(image_b64, media_type, context, examples,
                             reasons=False).tags
 
 
-@dataclass
-class OpenAIVLM:
-    """Any OpenAI-compatible vision endpoint. Requires `pip install openai`.
+PROVIDERS = ["anthropic"]
 
-    `base_url` and `api_key_env` are all that separate the providers: leave
-    them unset for OpenAI itself, or point them at xAI, Groq, or a local
-    server. The request body is identical in every case.
+# The one real model. Pinned here rather than spread across the CLI and the
+# UI, so "which model answered" has a single answer -- and it is the id the
+# cost table in `evaluation.runstats` prices against.
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+
+
+def get_client(provider: str = "anthropic",
+               model: str | None = None) -> VLMClient:
+    """Claude, and nothing else.
+
+    One provider is deliberate: one prompt tuned for one model, one price card
+    to keep honest, one thing to explain. The factory stays because the seam
+    is worth keeping -- adding a provider means adding a class here, not
+    editing the agent -- and because it is the single place the model id is
+    chosen.
+
+    Every run now needs ANTHROPIC_API_KEY. The test suite does not: it passes
+    its own stub client straight to `build_graph`, so it still runs offline.
     """
-
-    model: str = "gpt-4o"
-    max_tokens: int = 300
-    base_url: str | None = None
-    api_key_env: str = "OPENAI_API_KEY"
-    api_key_fallback: str | None = None   # local servers accept any string
-
-    def __post_init__(self) -> None:
-        from openai import OpenAI
-        key = os.getenv(self.api_key_env) or self.api_key_fallback
-        if not key:
-            raise RuntimeError(
-                f"{self.api_key_env} is not set. Export it, or add it to a "
-                f".env file in the repo root.")
-        self._client = OpenAI(api_key=key, base_url=self.base_url)
-
-    def predict(self, image_b64, media_type, context=None, examples=None,
-                reasons=True, feedback=None):
-        instruction = build_tagging_prompt(context, reasons=reasons,
-                                           feedback=feedback)
-        example_instruction = build_tagging_prompt(context)
-        messages = []
-        for ex_b64, ex_media, ex_tags in examples or []:
-            messages.append({"role": "user", "content": [
-                {"type": "text", "text": example_instruction},
-                {"type": "image_url", "image_url": {
-                    "url": f"data:{ex_media};base64,{ex_b64}"}}]})
-            messages.append({"role": "assistant",
-                             "content": json.dumps(ex_tags)})
-        messages.append({"role": "user", "content": [
-            {"type": "text", "text": instruction},
-            {"type": "image_url", "image_url": {
-                "url": f"data:{media_type};base64,{image_b64}"}}]})
-        resp = self._client.chat.completions.create(
-            model=self.model, max_tokens=self.max_tokens, messages=messages)
-        text = resp.choices[0].message.content or ""
-        return Prediction(parse_tag_array(text), parse_reasons(text))
-
-    def predict_tags(self, image_b64, media_type, context=None, examples=None):
-        return self.predict(image_b64, media_type, context, examples,
-                            reasons=False).tags
-
-
-@dataclass
-class MockVLM:
-    """Offline stand-in. Category-aware guesses so the pipeline runs with no
-    API key. Good for wiring tests/demos, NOT for measuring real accuracy."""
-
-    def predict_tags(self, image_b64, media_type, context=None, examples=None):
-        ctx = (context or "").lower()
-        if "mobile" in ctx:
-            return ["physical design", "side angle"]
-        if "tv" in ctx:
-            return ["physical design", "front angle"]
-        if "sound" in ctx or "headphone" in ctx or "speaker" in ctx:
-            return ["physical design", "product summary"]
-        return ["physical design"]
-
-    def predict(self, image_b64, media_type, context=None, examples=None,
-                reasons=True, feedback=None):
-        tags = self.predict_tags(image_b64, media_type, context, examples)
-        return Prediction(tags, {t: "mock client: no image was inspected"
-                                 for t in tags} if reasons else {})
-
-
-# Endpoints that speak the OpenAI wire format. Only the URL, the key variable
-# and the default model differ -- the request body is identical, which is why
-# one client class covers all of them. Model ids move quickly on these
-# services; override with --model if a default has been retired.
-OPENAI_COMPATIBLE = {
-    "openai": {"base_url": None, "key_env": "OPENAI_API_KEY",
-               "model": "gpt-4o"},
-    "xai": {"base_url": "https://api.x.ai/v1", "key_env": "XAI_API_KEY",
-            "model": "grok-2-vision-1212"},
-    # Groq's catalogue is mostly text-only; qwen3.8-27b is the vision model
-    # verified to accept image content on a free account.
-    "groq": {"base_url": "https://api.groq.com/openai/v1",
-             "key_env": "GROQ_API_KEY", "model": "qwen/qwen3.8-27b"},
-    "ollama": {"base_url": "http://localhost:11434/v1",
-               "key_env": "OLLAMA_API_KEY", "model": "llama3.2-vision",
-               "key_fallback": "ollama"},
-}
-
-PROVIDERS = ["anthropic", *OPENAI_COMPATIBLE, "mock"]
-
-
-def get_client(provider: str, model: str | None = None) -> VLMClient:
     provider = provider.lower()
-    if provider == "anthropic":
-        return AnthropicVLM(model=model or "claude-haiku-4-5-20251001")
-    if provider in OPENAI_COMPATIBLE:
-        cfg = OPENAI_COMPATIBLE[provider]
-        return OpenAIVLM(model=model or cfg["model"],
-                         base_url=cfg["base_url"], api_key_env=cfg["key_env"],
-                         api_key_fallback=cfg.get("key_fallback"))
-    if provider == "mock":
-        return MockVLM()
-    raise ValueError(f"Unknown provider: {provider!r}. "
-                     f"Choose one of: {', '.join(PROVIDERS)}")
+    if provider != "anthropic":
+        raise ValueError(f"Unknown provider: {provider!r}. "
+                         f"This project calls Claude only.")
+    return AnthropicVLM(model=model or DEFAULT_MODEL)
 
 
 # Product shots carry far more pixels than a tagging model needs, and the

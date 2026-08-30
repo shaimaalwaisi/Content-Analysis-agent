@@ -36,9 +36,9 @@ def _tagged_records(args) -> list[dict] | None:
 
 
 def run(args) -> None:
-    from analysis import (format_engagement, join_tags, load_metadata,
-                          rows_from_sheet, tag_engagement,
-                          write_synthetic_metadata)
+    from data import (format_engagement, join_tags, load_metadata,
+                      rows_from_sheet, tag_engagement,
+                      write_synthetic_metadata)
 
     records = _tagged_records(args)
 
