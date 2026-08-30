@@ -4,17 +4,18 @@ from __future__ import annotations
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING
 
-from .graph import _infer_context, build_graph
+from .graph import _infer_context, _split_context, build_graph
 from .logconf import get_logger
 from .memory import TagMemory
+from .taxonomy import highlight_tags
 from .vlm import Example, VLMClient
 
 if TYPE_CHECKING:            # typing only: the core must not depend at
     from evaluation.runstats import RunStats   # runtime on the layers that
-    from tools import SearchTool               # measure it or extend it
+    from tools import ResultStore, SearchTool  # measure it or extend it
 
 log = get_logger(__name__)
 
@@ -27,6 +28,7 @@ class TagResult:
     category: str
     model: str
     tags: list[str]
+    highlights: list[str] = field(default_factory=list)
 
 
 def find_images(root: str) -> list[str]:
@@ -40,31 +42,24 @@ def find_images(root: str) -> list[str]:
     return sorted(out)
 
 
-def _split_context(ctx: str) -> tuple[str, str]:
-    category = model = ""
-    for part in ctx.split(","):
-        part = part.strip()
-        if part.lower().startswith("category:"):
-            category = part.split(":", 1)[1].strip()
-        elif part.lower().startswith("model:"):
-            model = part.split(":", 1)[1].strip()
-    return category, model
-
-
 def run_folder(root: str, client: VLMClient, limit: int | None = None,
                on_item=None,
                examples: list[Example] | None = None,
                memory: TagMemory | None = None,
                workers: int = 1, search_tool: "SearchTool | None" = None,
-               stats: "RunStats | None" = None) -> list[TagResult]:
+               stats: "RunStats | None" = None,
+               store: "ResultStore | None" = None,
+               run_id: str | None = None) -> list[TagResult]:
     """Tag every image under `root`. `on_item(i, total, result)` is an optional
     progress callback (used by the CLI / Streamlit UI). `examples` are few-shot
     demonstrations prepended to every request (see fewshot.load_examples).
     `memory` reuses tags already computed for identical requests. `workers`
     tags images in parallel -- the work is network-bound, so threads help even
-    though they share one interpreter. Results keep folder order regardless."""
+    though they share one interpreter. Results keep folder order regardless.
+    `store` writes one durable row per image under `run_id`, which is what the
+    results table in the UI reads."""
     app = build_graph(client, memory=memory, search_tool=search_tool,
-                      stats=stats)
+                      stats=stats, store=store, run_id=run_id)
     paths = find_images(root)
     if limit:
         paths = paths[:limit]
@@ -92,7 +87,8 @@ def run_folder(root: str, client: VLMClient, limit: int | None = None,
                 "ms": round((time.perf_counter() - started) * 1000),
                 "cached": bool(out.get("cached"))})
         category, model = _split_context(ctx)
-        return TagResult(path=path, category=category, model=model, tags=tags)
+        return TagResult(path=path, category=category, model=model, tags=tags,
+                         highlights=highlight_tags(tags))
 
     started = time.perf_counter()
     if workers > 1:

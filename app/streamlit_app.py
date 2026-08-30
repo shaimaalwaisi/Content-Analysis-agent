@@ -95,6 +95,108 @@ def _tagging_tab() -> None:
     st.caption("Tip: set provider = mock to try the UI with no API key.")
 
 
+def _results_tab() -> None:
+    """The content creator's view: every image a run tagged, as one table.
+
+    Reads the results database only -- no model calls. Price and view counts
+    come from the metadata sheet at render time, so fixing the sheet never
+    means re-tagging.
+    """
+    from tools import RESULTS_PATH, ResultStore
+
+    db_path = st.text_input(
+        "Results database", value=RESULTS_PATH,
+        help="Written by `python -m cli tag`. One row per image per run.")
+    if not os.path.exists(db_path):
+        st.info(f"No results database at `{db_path}` yet. Tag a batch with:")
+        st.code("python -m cli tag --input data/test --limit 10 "
+                "--provider anthropic --few-shot 8", language="bash")
+        return
+
+    store = ResultStore(db_path)
+    try:
+        runs = store.runs()
+        if not runs:
+            st.info("The database is empty. Run `python -m cli tag` first.")
+            return
+        labels = {f"{r['run_id']} ({r['images']} images)": r["run_id"]
+                  for r in runs}
+        chosen = st.selectbox("Run", list(labels), index=0)
+        rows = store.rows(labels[chosen])
+    finally:
+        store.close()
+
+    meta = _metadata_rows()
+    table = []
+    for row in rows:
+        extra = meta.get(row["image_name"], {})
+        table.append({
+            "Image name": row["image_name"],
+            "Product": row["product"] or extra.get("product", ""),
+            "Category": row["category"] or extra.get("category", ""),
+            "Highlights": ", ".join(row["highlights"]),
+            "Price": extra.get("price", ""),
+            "Views": extra.get("views", ""),
+            "Marketing tags": ", ".join(row["tags"]),
+        })
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Images", len(rows))
+    c2.metric("From memory", sum(1 for r in rows if r["cached"]),
+              help="Rows served from the agent's cache, with no model call")
+    c3.metric("Re-prompted", sum(1 for r in rows if (r["attempts"] or 0) > 1),
+              help="Images the reasoning loop looked at twice")
+
+    st.dataframe(table, width="stretch", hide_index=True)
+
+    untagged = [r["image_name"] for r in rows if not r["tags"]]
+    if untagged:
+        st.warning(f"{len(untagged)} image(s) came back with no tags: "
+                   f"{', '.join(untagged[:5])}")
+
+    with st.expander("Why these tags? (the model's own reasons)"):
+        explained = [r for r in rows if r["rationale"]]
+        if not explained:
+            st.caption("No reasons recorded. The mock client and plain "
+                       "clients do not produce them.")
+        for row in explained:
+            st.markdown(f"**{row['image_name']}**")
+            for tag, why in row["rationale"].items():
+                st.caption(f"`{tag}` - {why}")
+
+    st.download_button("Download as CSV", _to_csv(table),
+                       file_name=f"{labels[chosen]}_tags.csv",
+                       mime="text/csv")
+
+
+def _metadata_rows() -> dict:
+    """file name -> its metadata sheet row, or {} when the sheet is absent.
+
+    The sheet ships with the task rather than the repo, and the table is still
+    useful without it, so a missing sheet costs two columns and nothing else.
+    """
+    path = os.environ.get("METADATA_PATH", "data/meta_data.xlsx")
+    if not os.path.exists(path):
+        return {}
+    try:
+        from analysis.metadata import load_metadata
+        return {rec["file"]: rec for rec in load_metadata(path)}
+    except Exception as exc:      # pandas missing, unreadable sheet, ...
+        st.caption(f"Metadata sheet not joined: {exc}")
+        return {}
+
+
+def _to_csv(table: list[dict]) -> str:
+    import csv
+    import io
+    buf = io.StringIO()
+    if table:
+        writer = csv.DictWriter(buf, fieldnames=list(table[0]))
+        writer.writeheader()
+        writer.writerows(table)
+    return buf.getvalue()
+
+
 def _scores_tab() -> None:
     """Read-only view of a report written by `python -m cli eval --report`.
 
@@ -187,8 +289,11 @@ def _scores_tab() -> None:
         st.dataframe(rows, width="stretch", hide_index=True)
 
 
-tag_tab, scores_tab = st.tabs(["Tag an image", "Scores"])
+tag_tab, results_tab, scores_tab = st.tabs(
+    ["Tag an image", "Results", "Scores"])
 with tag_tab:
     _tagging_tab()
+with results_tab:
+    _results_tab()
 with scores_tab:
     _scores_tab()

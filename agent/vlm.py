@@ -10,8 +10,16 @@ image. Three implementations ship:
 * MockVLM       - no network / no key; deterministic, for tests & offline demos
 
 Prompt wording lives in prompts.py; a client only sends the prompt with the
-image and extracts the model's tag list. Validation against the taxonomy
-happens later (graph.validate_tags).
+image and extracts the model's answer. Validation against the taxonomy happens
+later, inside the graph's analyze_image node.
+
+Two entry points, and the second is the one the agent uses:
+
+* predict_tags(...) -> list[str]        the plain answer
+* predict(...)      -> Prediction       tags plus the model's reason for each,
+                                        and an optional `feedback` string that
+                                        tells it what a previous attempt on the
+                                        same image got wrong
 """
 from __future__ import annotations
 
@@ -20,7 +28,7 @@ import io
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from .prompts import build_tagging_prompt
@@ -44,6 +52,58 @@ def parse_tag_array(text: str) -> list[str]:
     return [str(t) for t in data if isinstance(t, (str, int, float))]
 
 
+# A reason line: "side angle - the phone is shot from its edge". Models write
+# the separator as a hyphen, an en dash or a colon, and often bullet the line,
+# so all of those are accepted; anything else is simply not a reason.
+_REASON_LINE = re.compile(
+    r"^\s*(?:[-*\u2022]\s*)?(?:\d+[.)]\s*)?"
+    r"(?P<tag>[A-Za-z][A-Za-z &\']{1,30}?)\s*[-\u2013:]\s+(?P<why>\S.*)$")
+
+
+def parse_reasons(text: str) -> dict[str, str]:
+    """Pull `tag -> why` out of the model's step-1 lines.
+
+    Free text, so this is best-effort by design: a missing or malformed reason
+    costs an explanation, never a tag. Reasons for tags the model did not
+    actually answer with are discarded by the caller.
+
+    Models often write a General and its Specific on one line -- "feature
+    graphics: camera - a ZEISS lens is called out" -- so a nested tag is read
+    as well, but only when it is a real tag: without that check, any reason
+    containing a dash would invent one.
+    """
+    from .taxonomy import allowed_tags       # cheap, and keeps the vocabulary
+    vocabulary = allowed_tags()              # in one place
+
+    def clean(value: str) -> str:
+        return value.strip().rstrip(".")[:200]
+
+    reasons: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        if line.lstrip().startswith("["):      # the answer array, not a reason
+            continue
+        match = _REASON_LINE.match(line)
+        if not match:
+            continue
+        tag = " ".join(match.group("tag").lower().split())
+        why = clean(match.group("why"))
+        reasons.setdefault(tag, why)
+        nested = _REASON_LINE.match(why)
+        if nested:
+            inner = " ".join(nested.group("tag").lower().split())
+            if inner in vocabulary:
+                reasons.setdefault(inner, clean(nested.group("why")))
+    return reasons
+
+
+@dataclass
+class Prediction:
+    """One model answer: the tags, and why it says it chose them."""
+
+    tags: list[str]
+    reasons: dict[str, str] = field(default_factory=dict)
+
+
 class VLMClient(Protocol):
     def predict_tags(self, image_b64: str, media_type: str,
                      context: str | None = None,
@@ -62,14 +122,20 @@ class AnthropicVLM:
         from anthropic import Anthropic  # lazy: mock needs no dependency
         self._client = Anthropic()
 
-    def predict_tags(self, image_b64, media_type, context=None, examples=None):
-        instruction = build_tagging_prompt(context)
+    def predict(self, image_b64, media_type, context=None, examples=None,
+                reasons=True, feedback=None):
+        instruction = build_tagging_prompt(context, reasons=reasons,
+                                           feedback=feedback)
+        # Few-shot turns show the answer only: the vocabulary is what an
+        # example teaches, and inventing a reason for someone else's label
+        # would teach the model to invent them too.
+        example_instruction = build_tagging_prompt(context)
         messages = []
         for ex_b64, ex_media, ex_tags in examples or []:
             messages.append({"role": "user", "content": [
                 {"type": "image", "source": {"type": "base64",
                  "media_type": ex_media, "data": ex_b64}},
-                {"type": "text", "text": instruction}]})
+                {"type": "text", "text": example_instruction}]})
             messages.append({"role": "assistant",
                              "content": json.dumps(ex_tags)})
         messages.append({"role": "user", "content": [
@@ -79,7 +145,11 @@ class AnthropicVLM:
         resp = self._client.messages.create(
             model=self.model, max_tokens=self.max_tokens, messages=messages)
         text = "".join(b.text for b in resp.content if b.type == "text")
-        return parse_tag_array(text)
+        return Prediction(parse_tag_array(text), parse_reasons(text))
+
+    def predict_tags(self, image_b64, media_type, context=None, examples=None):
+        return self.predict(image_b64, media_type, context, examples,
+                            reasons=False).tags
 
 
 @dataclass
@@ -106,12 +176,15 @@ class OpenAIVLM:
                 f".env file in the repo root.")
         self._client = OpenAI(api_key=key, base_url=self.base_url)
 
-    def predict_tags(self, image_b64, media_type, context=None, examples=None):
-        instruction = build_tagging_prompt(context)
+    def predict(self, image_b64, media_type, context=None, examples=None,
+                reasons=True, feedback=None):
+        instruction = build_tagging_prompt(context, reasons=reasons,
+                                           feedback=feedback)
+        example_instruction = build_tagging_prompt(context)
         messages = []
         for ex_b64, ex_media, ex_tags in examples or []:
             messages.append({"role": "user", "content": [
-                {"type": "text", "text": instruction},
+                {"type": "text", "text": example_instruction},
                 {"type": "image_url", "image_url": {
                     "url": f"data:{ex_media};base64,{ex_b64}"}}]})
             messages.append({"role": "assistant",
@@ -122,7 +195,12 @@ class OpenAIVLM:
                 "url": f"data:{media_type};base64,{image_b64}"}}]})
         resp = self._client.chat.completions.create(
             model=self.model, max_tokens=self.max_tokens, messages=messages)
-        return parse_tag_array(resp.choices[0].message.content or "")
+        text = resp.choices[0].message.content or ""
+        return Prediction(parse_tag_array(text), parse_reasons(text))
+
+    def predict_tags(self, image_b64, media_type, context=None, examples=None):
+        return self.predict(image_b64, media_type, context, examples,
+                            reasons=False).tags
 
 
 @dataclass
@@ -139,6 +217,12 @@ class MockVLM:
         if "sound" in ctx or "headphone" in ctx or "speaker" in ctx:
             return ["physical design", "product summary"]
         return ["physical design"]
+
+    def predict(self, image_b64, media_type, context=None, examples=None,
+                reasons=True, feedback=None):
+        tags = self.predict_tags(image_b64, media_type, context, examples)
+        return Prediction(tags, {t: "mock client: no image was inspected"
+                                 for t in tags} if reasons else {})
 
 
 # Endpoints that speak the OpenAI wire format. Only the URL, the key variable

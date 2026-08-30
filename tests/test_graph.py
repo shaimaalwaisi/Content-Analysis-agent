@@ -123,14 +123,90 @@ class TestEnrichment:
         mem.close()
 
 
+class ReasoningVLM:
+    """A client that reasons: it returns a tag list plus a why for each, and
+    can be told to answer differently once it has had feedback."""
+
+    model = "reasoning-1"
+
+    def __init__(self, first, second=None):
+        self.first, self.second = first, second or first
+        self.calls = 0
+        self.feedback_seen = []
+
+    def predict(self, image_b64, media_type, context=None, examples=None,
+                feedback=None):
+        from agent.vlm import Prediction
+        self.calls += 1
+        self.feedback_seen.append(feedback)
+        tags = self.first if feedback is None else self.second
+        return Prediction(list(tags), {t: f"because {t}" for t in tags})
+
+    def predict_tags(self, image_b64, media_type, context=None, examples=None):
+        return self.predict(image_b64, media_type, context, examples).tags
+
+
+class TestReasoningLoop:
+    def test_a_weak_answer_is_asked_again(self, jpeg):
+        client = ReasoningVLM(["sparkly", "unicorn mode", "colour"],
+                              ["physical design", "colour"])
+        assert tag_one(build_graph(client), jpeg) == ["physical design",
+                                                      "colour"]
+        assert client.calls == 2
+
+    def test_a_good_answer_is_left_alone(self, jpeg):
+        client = ReasoningVLM(["physical design", "front angle"])
+        tag_one(build_graph(client), jpeg)
+        assert client.calls == 1, "a clean answer must not cost a second call"
+
+    def test_an_empty_answer_is_asked_again(self, jpeg):
+        client = ReasoningVLM([], ["physical design"])
+        assert tag_one(build_graph(client), jpeg) == ["physical design"]
+
+    def test_the_loop_is_bounded(self, jpeg):
+        client = ReasoningVLM(["sparkly", "unicorn mode"])
+        assert tag_one(build_graph(client), jpeg) == []
+        assert client.calls == 2, "the loop must stop, however bad the answer"
+
+    def test_passes_one_turns_the_loop_off(self, jpeg):
+        client = ReasoningVLM(["sparkly", "unicorn mode", "colour"],
+                              ["physical design"])
+        tag_one(build_graph(client, passes=1), jpeg)
+        assert client.calls == 1
+
+    def test_the_second_prompt_names_the_rejected_tags(self, jpeg):
+        client = ReasoningVLM(["sparkly", "unicorn mode", "colour"],
+                              ["physical design"])
+        tag_one(build_graph(client), jpeg)
+        first, second = client.feedback_seen
+        assert first is None
+        assert "sparkly" in second and "unicorn mode" in second
+        assert "colour" not in second, "only rejected tags are fed back"
+
+    def test_a_plain_client_still_works(self, jpeg, stub):
+        # StubVLM implements predict_tags only: no reasons, no feedback.
+        assert tag_one(build_graph(stub), jpeg) == ["physical design",
+                                                    "front angle"]
+
+
 class TestInstrumentation:
     def test_counts_model_calls_and_hallucinations(self, jpeg, stub):
         stub.tags = ["physical design", "sparkly", "unicorn mode"]
         stats = RunStats()
         stats.record_image()
+        # Two bad tags out of three is a weak answer, so the reasoning loop
+        # asks a second time -- and this stub answers the same way twice.
         tag_one(build_graph(stub, stats=stats), jpeg)
+        assert stats.model_calls == 2
+        assert stats.raw_tags == 6 and stats.dropped_tags == 4
+        assert stats.hallucination_rate == pytest.approx(2 / 3)
+
+    def test_one_model_call_when_the_loop_is_off(self, jpeg, stub):
+        stub.tags = ["physical design", "sparkly", "unicorn mode"]
+        stats = RunStats()
+        stats.record_image()
+        tag_one(build_graph(stub, stats=stats, passes=1), jpeg)
         assert stats.model_calls == 1
-        assert stats.raw_tags == 3 and stats.dropped_tags == 2
         assert stats.hallucination_rate == pytest.approx(2 / 3)
 
     def test_clean_answers_have_no_hallucination(self, jpeg, stub):

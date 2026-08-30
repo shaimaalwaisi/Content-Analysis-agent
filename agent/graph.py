@@ -1,18 +1,28 @@
 """The tagging agent, built as a small LangGraph state machine.
 
-Flow (one run per image):
+Three nodes, one branch and one loop (per image):
 
-    load_image -> recall -+-(hit)------------------------> END
-                          |
-                          +-(miss)-> tag_image -> validate_tags -> remember -> END
+    prepare -+-(memory hit)------------------------------+-> persist -> END
+             |                                           |
+             +-(miss)-> analyze_image -+-(good answer)---+
+                            ^          |
+                            +-(weak)---+   at most `attempts` passes
 
-Each node is a small, testable function. This makes the design easy to read
-and extend (e.g. drop an `enrich` node between tag and validate to look up
-non-visual tags like 'awards'/'benchmark' via web search or MCP).
+* prepare       reads the image, infers the product context from its path and
+                asks memory whether this exact request was answered before.
+* analyze_image is the reason-act-check step: the model proposes tags *with a
+                reason for each*, an optional search tool adds the tags an
+                image cannot show, and the controlled vocabulary decides what
+                survives. If too little survives, the node loops once with the
+                rejected tags fed back into the prompt.
+* persist       writes the answer: the memory row that lets an identical
+                request skip the model, and the durable results row the UI
+                reads. A memory hit routes through here too, so ten images
+                always produce ten rows.
 
-`recall`/`remember` are the agent's memory: with a TagMemory attached, an image
-already tagged under identical conditions short-circuits straight to END
-without calling the model.
+The nodes stay small and testable, and the shape no longer changes with
+configuration: enrichment is a step inside analyze_image rather than a fourth
+box that appears only when a search tool is wired in.
 """
 from __future__ import annotations
 
@@ -22,29 +32,38 @@ from typing import TYPE_CHECKING, Optional, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from .evidence import tags_from_evidence
 from .logconf import get_logger
 from .memory import TagMemory, make_key
+from .prompts import build_feedback
 from .retry import call_with_retry
-from .evidence import tags_from_evidence
-from .taxonomy import allowed_tags, normalise
+from .taxonomy import allowed_tags, highlight_tags, normalise
 from .vlm import Example, VLMClient, encode_image
 
 if TYPE_CHECKING:            # typing only: the core must not depend at
     from evaluation.runstats import RunStats   # runtime on the layers that
-    from tools import SearchTool               # measure it or extend it
+    from tools import ResultStore, SearchTool  # measure it or extend it
 
 log = get_logger(__name__)
+
+# How many times analyze_image may look at one image. 2 = one re-prompt after
+# a weak answer, which is the whole reasoning loop; 1 disables it.
+DEFAULT_ATTEMPTS = 2
 
 
 class TagState(TypedDict, total=False):
     image_path: str
     context: Optional[str]          # e.g. "Category: Mobile, Model: XPERIA10MK5"
     examples: Optional[list[Example]]
+    run_id: Optional[str]           # the batch this image belongs to
     image_b64: str
     media_type: str
     raw_tags: list[str]             # what the model said
+    rationale: dict                 # tag -> the model's reason for it
     evidence: list                  # search results backing non-visual tags
-    enriched_tags: list[str]        # tags proposed by the enrich step
+    dropped: list[str]              # tags rejected by the vocabulary
+    feedback: Optional[str]         # what to tell the model on a second pass
+    attempt: int                    # passes through analyze_image so far
     tags: list[str]                 # validated, in-vocabulary tags
     cache_key: Optional[str]        # memory fingerprint for this request
     cached: bool                    # True when tags came from memory
@@ -71,70 +90,86 @@ def _infer_context(image_path: str) -> str:
     return ", ".join(bits)
 
 
+def _split_context(context: str | None) -> tuple[str, str]:
+    """'Category: TV, Model: XR-65A95K' -> ('TV', 'XR-65A95K')."""
+    category = product = ""
+    for part in (context or "").split(","):
+        part = part.strip()
+        if part.lower().startswith("category:"):
+            category = part.split(":", 1)[1].strip()
+        elif part.lower().startswith("model:"):
+            product = part.split(":", 1)[1].strip()
+    return category, product
+
+
 def build_graph(client: VLMClient, memory: TagMemory | None = None,
                 attempts: int = 3, search_tool: "SearchTool | None" = None,
-                stats: "RunStats | None" = None):
+                stats: "RunStats | None" = None,
+                store: "ResultStore | None" = None,
+                run_id: str | None = None,
+                passes: int = DEFAULT_ATTEMPTS):
     """Compile the agent for a given VLM client.
 
     Pass a TagMemory to reuse previously computed tags for identical requests.
     `attempts` bounds how often a transient provider failure is retried.
-    Passing a `search_tool` inserts the enrich node, which looks the product up
-    to justify non-visual tags (awards, benchmark, energy rating).
+    Passing a `search_tool` turns on enrichment, which looks the product up to
+    justify non-visual tags (awards, benchmark, energy rating).
     Passing a `RunStats` collects the label-free workflow metrics.
+    Passing a `ResultStore` writes one durable row per image, tagged with
+    `run_id` (state may override it per image).
+    `passes` bounds the reasoning loop: 2 allows one re-prompt after a weak
+    answer, 1 turns the loop off.
     """
     _retry = (lambda _e: stats.record_retry()) if stats else None
     model_id = getattr(client, "model", type(client).__name__)
 
-    def load_image(state: TagState) -> TagState:
+    def prepare(state: TagState) -> TagState:
+        """Read the image, work out the context, ask memory."""
         path = state["image_path"]
         b64, media = encode_image(path)
         ctx = state.get("context") or _infer_context(path) or None
-        return {"image_b64": b64, "media_type": media, "context": ctx}
-
-    def recall(state: TagState) -> TagState:
-        """Look the request up in memory before spending a model call."""
+        out: TagState = {"image_b64": b64, "media_type": media, "context": ctx,
+                         "attempt": 0, "cached": False}
         if memory is None:
-            return {"cached": False}
-        key = make_key(state["image_b64"], model_id, state.get("context"),
-                       state.get("examples"),
+            return out
+        key = make_key(b64, model_id, ctx, state.get("examples"),
                        extra="enrich" if search_tool else "")
+        out["cache_key"] = key
         hit = memory.get(key)
         if hit is not None:
-            log.info("memory_hit", extra={"image": state["image_path"],
-                                          "n_tags": len(hit)})
+            log.info("memory_hit", extra={"image": path, "n_tags": len(hit)})
             if stats:
                 stats.record_cache_hit()
-            return {"cache_key": key, "cached": True, "tags": hit}
-        return {"cache_key": key, "cached": False}
+            out.update({"cached": True, "tags": hit})
+        return out
 
-    def tag_image(state: TagState) -> TagState:
-        started = time.perf_counter()
-        raw = call_with_retry(
-            lambda: client.predict_tags(
+    def _call_model(state: TagState) -> tuple[list[str], dict]:
+        """One model call. Clients that support reasons return them; a plain
+        client (a test stub, or anything implementing only the protocol's
+        predict_tags) still works and simply has nothing to explain."""
+        predict = getattr(client, "predict", None)
+        if predict is None:
+            tags = client.predict_tags(
                 state["image_b64"], state["media_type"],
-                context=state.get("context"),
-                examples=state.get("examples")),
-            attempts=attempts, on_retry=_retry)
-        log.info("model_call", extra={
-            "image": state["image_path"], "model": model_id,
-            "ms": round((time.perf_counter() - started) * 1000),
-            "n_raw_tags": len(raw),
-            "n_examples": len(state.get("examples") or [])})
-        if stats:
-            stats.record_model_call((time.perf_counter() - started) * 1000,
-                                    len(raw))
-        return {"raw_tags": raw}
+                context=state.get("context"), examples=state.get("examples"))
+            return list(tags), {}
+        pred = predict(state["image_b64"], state["media_type"],
+                       context=state.get("context"),
+                       examples=state.get("examples"),
+                       feedback=state.get("feedback"))
+        return list(pred.tags), dict(pred.reasons)
 
-    def enrich(state: TagState) -> TagState:
+    def _enrich(state: TagState) -> tuple[list[str], list]:
         """Look the product up to justify tags the image cannot show.
 
-        Only ever *proposes* tags: everything still passes through
-        validate_tags, so the controlled vocabulary is enforced regardless of
-        what a search returns.
+        Only ever *proposes* tags: everything still passes through validation,
+        so the controlled vocabulary is enforced regardless of what a search
+        returns. Enrichment is additive -- a search failure must not lose the
+        tags the model already produced.
         """
         context = state.get("context") or ""
         if not context:
-            return {"enriched_tags": []}
+            return [], []
         # Ask for the evidence the rules look for. A bare product query
         # returns generic marketing copy that mentions none of it.
         product = (context.replace("Category:", "")
@@ -146,12 +181,10 @@ def build_graph(client: VLMClient, memory: TagMemory | None = None,
             results = call_with_retry(lambda: search_tool.search(query.strip()),
                                       attempts=attempts, on_retry=_retry)
         except Exception as exc:
-            # Enrichment is additive; a search failure must not lose the tags
-            # the model already produced.
             log.warning("enrich_failed", extra={
                 "image": state["image_path"],
                 "error_type": type(exc).__name__, "error": str(exc)[:200]})
-            return {"enriched_tags": []}
+            return [], []
         if stats:
             stats.record_tool_call((time.perf_counter() - started) * 1000)
         proposed = tags_from_evidence(results)
@@ -159,64 +192,119 @@ def build_graph(client: VLMClient, memory: TagMemory | None = None,
             "image": state["image_path"], "query": query.strip(),
             "results": len(results), "proposed": proposed,
             "ms": round((time.perf_counter() - started) * 1000)})
-        return {"evidence": [r.__dict__ for r in results],
-                "enriched_tags": proposed,
-                "raw_tags": list(state.get("raw_tags", [])) + proposed}
+        return proposed, [r.__dict__ for r in results]
 
-    def validate_tags(state: TagState) -> TagState:
+    def _validate(raw: list[str]) -> tuple[list[str], list[str]]:
+        """Split a raw answer into (kept, dropped) against the vocabulary."""
         vocab = allowed_tags()
-        seen, clean = set(), []
-        for t in state.get("raw_tags", []):
-            n = normalise(t)
-            if n in vocab and n not in seen:
-                seen.add(n)
-                clean.append(n)
-        dropped = [t for t in state.get("raw_tags", [])
-                   if normalise(t) not in vocab]
+        seen, kept, dropped = set(), [], []
+        for tag in raw:
+            norm = normalise(tag)
+            if norm in vocab and norm not in seen:
+                seen.add(norm)
+                kept.append(norm)
+            elif norm not in vocab:
+                dropped.append(tag)
+        return kept, dropped
+
+    def analyze_image(state: TagState) -> TagState:
+        """Reason, act, check: ask the model, enrich, enforce the vocabulary."""
+        started = time.perf_counter()
+        raw, reasons = call_with_retry(lambda: _call_model(state),
+                                       attempts=attempts, on_retry=_retry)
+        log.info("model_call", extra={
+            "image": state["image_path"], "model": model_id,
+            "ms": round((time.perf_counter() - started) * 1000),
+            "n_raw_tags": len(raw), "attempt": state.get("attempt", 0) + 1,
+            "n_examples": len(state.get("examples") or [])})
+        if stats:
+            stats.record_model_call((time.perf_counter() - started) * 1000,
+                                    len(raw))
+
+        evidence = []
+        if search_tool is not None:
+            proposed, evidence = _enrich(state)
+            raw = raw + proposed
+
+        kept, dropped = _validate(raw)
         if dropped:
             # Out-of-vocabulary predictions are the signal to watch in
             # production: a rising rate means prompt or taxonomy drift.
             log.warning("out_of_vocab_tags", extra={
                 "image": state["image_path"], "dropped": dropped,
-                "kept": clean})
-        # Counted only on a real model answer: a memory hit replays an
-        # already-validated list and would dilute the rate with zeros.
-        if stats and not state.get("cached"):
+                "kept": kept})
+        if stats:
             stats.record_dropped(len(dropped))
-        return {"tags": clean}
+        return {"raw_tags": raw, "tags": kept, "dropped": dropped,
+                "evidence": evidence,
+                # Only reasons for tags that survived: an explanation for a
+                # rejected tag is an explanation of something that never
+                # happened.
+                "rationale": {t: reasons[t] for t in kept if t in reasons},
+                "attempt": state.get("attempt", 0) + 1,
+                "feedback": build_feedback(dropped, kept)}
 
-    def remember(state: TagState) -> TagState:
-        """Store the validated tags so an identical request skips the model."""
-        if memory is not None and state.get("cache_key"):
-            memory.put(state["cache_key"], state.get("tags", []), model_id)
+    def _looks_weak(state: TagState) -> bool:
+        """Is this answer worth a second look?
+
+        Two symptoms, both cheap to measure and both meaning the model did not
+        work inside the vocabulary: nothing survived validation, or more tags
+        were rejected than kept.
+        """
+        kept, dropped = state.get("tags", []), state.get("dropped", [])
+        return not kept or len(dropped) > len(kept)
+
+    def route_after_analyze(state: TagState) -> str:
+        if state.get("attempt", 1) < passes and _looks_weak(state):
+            log.info("reasoning_retry", extra={
+                "image": state["image_path"], "attempt": state.get("attempt"),
+                "kept": state.get("tags", []),
+                "dropped": state.get("dropped", [])})
+            return "analyze_image"
+        return "persist"
+
+    def persist(state: TagState) -> TagState:
+        """Write the answer: the memory row, and the durable result row."""
+        tags = state.get("tags", [])
+        if memory is not None and state.get("cache_key") \
+                and not state.get("cached"):
+            memory.put(state["cache_key"], tags, model_id)
+        if store is not None:
+            from tools import Tagging      # the core never imports tools at
+            batch = state.get("run_id") or run_id  # import time
+            category, product = _split_context(state.get("context"))
+            store.put(Tagging(
+                run_id=batch or "adhoc", image_path=state["image_path"],
+                tags=tags, highlights=highlight_tags(tags),
+                rationale=state.get("rationale", {}), category=category,
+                product=product, model=model_id,
+                attempts=state.get("attempt", 0),
+                cached=bool(state.get("cached"))))
         return {}
 
     g = StateGraph(TagState)
-    g.add_node("load_image", load_image)
-    g.add_node("recall", recall)
-    g.add_node("tag_image", tag_image)
-    g.add_node("validate_tags", validate_tags)
-    g.add_node("remember", remember)
-    g.set_entry_point("load_image")
-    g.add_edge("load_image", "recall")
-    # A memory hit already has its tags: route straight to the end.
-    g.add_conditional_edges("recall", lambda s: END if s.get("cached")
-                            else "tag_image", {END: END,
-                                               "tag_image": "tag_image"})
-    if search_tool is not None:
-        g.add_node("enrich", enrich)
-        g.add_edge("tag_image", "enrich")
-        g.add_edge("enrich", "validate_tags")
-    else:
-        g.add_edge("tag_image", "validate_tags")
-    g.add_edge("validate_tags", "remember")
-    g.add_edge("remember", END)
+    g.add_node("prepare", prepare)
+    g.add_node("analyze_image", analyze_image)
+    g.add_node("persist", persist)
+    g.set_entry_point("prepare")
+    # A memory hit already has its tags, but still needs a results row.
+    g.add_conditional_edges("prepare",
+                            lambda s: "persist" if s.get("cached")
+                            else "analyze_image",
+                            {"persist": "persist",
+                             "analyze_image": "analyze_image"})
+    # The reasoning loop: a weak answer goes back to the same node, once.
+    g.add_conditional_edges("analyze_image", route_after_analyze,
+                            {"analyze_image": "analyze_image",
+                             "persist": "persist"})
+    g.add_edge("persist", END)
     return g.compile()
 
 
 def tag_one(app, image_path: str, context: str | None = None,
-            examples: list[Example] | None = None) -> list[str]:
+            examples: list[Example] | None = None,
+            run_id: str | None = None) -> list[str]:
     """Run the compiled graph for a single image, return validated tags."""
     out = app.invoke({"image_path": image_path, "context": context,
-                      "examples": examples})
+                      "examples": examples, "run_id": run_id})
     return out.get("tags", [])

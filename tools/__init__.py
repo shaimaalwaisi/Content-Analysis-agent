@@ -1,9 +1,17 @@
 """Tools the agent can call.
 
-A tool is a capability the agent reaches for when the image alone cannot answer
-the question: today that means looking a product up to justify `awards`,
-`benchmark` or `energy rating`. Backends sit behind one protocol, exactly as
-the model clients do in `agent.vlm`:
+Two of them:
+
+* search   -- looking a product up when the image alone cannot answer the
+              question, which is what justifies `awards`, `benchmark` or
+              `energy rating`
+* database -- where the tagged rows land, and what the results table reads
+
+The vision model is not in here: it is the agent's own reasoning, not a
+capability it reaches out to.
+
+Search backends sit behind one protocol, exactly as the model clients do in
+`agent.vlm`:
 
 * MockSearchTool      - offline, deterministic; no key, no network
 * AnthropicWebSearch  - Claude's server-side web_search, run on Anthropic's
@@ -17,9 +25,12 @@ agent takes a tool as an argument, and the CLI decides which one to pass, so
 The rules turning evidence into tags live in `agent.evidence`,
 because that is a statement about the taxonomy rather than about searching.
 """
+from .database import DEFAULT_PATH as RESULTS_PATH
+from .database import ResultStore, Tagging, new_run_id
 from .search import (AnthropicWebSearch, MockSearchTool, SearchTool,
                      get_search_tool)
 from agent.tools_types import SearchResult
 
-__all__ = ["AnthropicWebSearch", "MockSearchTool", "SearchResult",
-           "SearchTool", "get_search_tool"]
+__all__ = ["AnthropicWebSearch", "MockSearchTool", "RESULTS_PATH",
+           "ResultStore", "SearchResult", "SearchTool", "Tagging",
+           "get_search_tool", "new_run_id"]

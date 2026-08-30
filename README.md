@@ -19,7 +19,10 @@ For real tagging, copy `.env.example` to `.env` and add an `ANTHROPIC_API_KEY`
 ([console.anthropic.com](https://console.anthropic.com/settings/keys)). `.env` is gitignored.
 
 ```bash
-python -m cli tag --input data/test --provider anthropic --few-shot 8 --workers 8
+# Tag ten images; every row lands in results.sqlite3
+python -m cli tag --input data/test --limit 10 --provider anthropic --few-shot 8 --workers 8
+
+# ...and the Results tab shows them as one table
 streamlit run app/streamlit_app.py
 ```
 
@@ -36,8 +39,15 @@ Every run writes a timestamped JSON record to `results/` — the settings used, 
 what it cost — so a run survives the terminal scrolling away. `--results-dir` moves them,
 `--no-results` turns them off, and the app's Scores tab opens the newest `eval` record by default.
 
+`tag` also writes one durable row per image into `results.sqlite3` (`--db` moves it, `--no-db` turns
+it off). That is what the app's **Results** tab reads: image name, product, category, highlights,
+price, views and the marketing tags, with the model's own reason for each tag underneath and a CSV
+download. Price and views are joined from `meta_data.xlsx` when the table renders, so correcting the
+sheet never means re-tagging.
+
 Useful flags: `--provider` (`anthropic`, `openai`, `xai`, `groq`, `ollama`, `mock`), `--few-shot N`,
-`--workers N`, `--enrich` (look products up for non-visual tags), `--no-memory`, `--report FILE`.
+`--workers N`, `--enrich` (look products up for non-visual tags), `--no-memory`, `--no-db`,
+`--report FILE`.
 
 ## Results
 
@@ -61,37 +71,50 @@ out-perform spec detail.
 
 ```
 agent/        the agent: graph, vlm, taxonomy, prompts, memory, retry, logging
-tools/        capabilities it calls: web search for non-visual tags
+tools/        capabilities it calls: search.py for non-visual tags, database.py for the results
 evaluation/   measures the agent: quality.py (vs labels), runstats.py (vs nothing)
 analysis/     measures the data: tags vs image views
 cli/          terminal entry point, one module per subcommand
-app/          Streamlit UI: tag an image, and a read-only scores tab
-tests/        133 offline tests
+app/          Streamlit UI: tag an image, the results table, and a read-only scores tab
+tests/        169 offline tests
 ```
 
 Dependencies point inward: the outer folders import `agent`; it imports none of them at runtime.
 
-The agent is five nodes, branching on memory:
+The agent is three nodes, one branch and one loop:
 
 ```
-load_image → recall ─(hit)────────────────────────────────────► END
-                    └(miss)─► tag_image → enrich* → validate_tags → remember → END
-                                          *only with --enrich
+prepare ─(memory hit)──────────────────────────────┐
+        └(miss)─► analyze_image ─(good answer)─────┴─► persist ─► END
+                       ▲     │
+                       └─────┘ weak answer: ask once more
 ```
 
-`validate_tags` is the guardrail: anything outside the vocabulary is dropped, so neither the model
-nor a search tool can invent a tag. Swapping providers, editing `agent/taxonomy.json`, or adding a
-graph node reaches every entry point, because they all go through `build_graph`.
+* **prepare** — encode the image, infer `Category`/`Model` from its folder path, ask memory.
+* **analyze_image** — reason, act, check: the model proposes tags *and a reason for each*, `--enrich`
+  adds what an image cannot show, and the vocabulary decides what survives. If nothing survives, or
+  more tags were rejected than kept, the node runs once more with the rejected tags quoted back at
+  the model. Capped at two passes, so an image can never cost more than two calls.
+* **persist** — the memory row that lets an identical request skip the model, and the durable
+  results row the table reads. A memory hit routes through here too, so ten images are always ten
+  rows.
+
+Validation is the guardrail: anything outside the vocabulary is dropped, so neither the model nor a
+search tool can invent a tag — and the feedback sent back into the loop only ever names tags that
+were *rejected*, so it cannot steer the model towards a particular answer. Swapping providers,
+editing `agent/taxonomy.json`, or changing the graph reaches every entry point, because they all go
+through `build_graph`.
 
 ## Tests
 
 ```bash
-pytest        # 133 tests, ~1.5s, no network and no API key
+pytest        # 169 tests, ~1.7s, no network and no API key
 ```
 
 Fixtures synthesise their own images, so a fresh clone can run them despite the dataset being
 gitignored. The suite is mutation-checked: breaking the few-shot leakage guard, the vocabulary
-filter, or media-type detection each fails a specific named test.
+filter, media-type detection, the reasoning loop's bound, or the one-row-per-image rule each fails a
+specific named test.
 
 ## Notes on the data
 

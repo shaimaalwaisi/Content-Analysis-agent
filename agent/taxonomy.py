@@ -7,8 +7,8 @@ TRAINING filenames but are missing from Appendix 1 (e.g. 'left', 'right') are
 listed under 'observed_extra' and merged in, so the model may predict them and
 evaluation does not unfairly penalise them.
 
-Public API (unchanged): TAXONOMY, OBSERVED_EXTRA, allowed_tags(), normalise(),
-taxonomy_prompt().
+Public API: TAXONOMY, OBSERVED_EXTRA, allowed_tags(), normalise(),
+taxonomy_prompt(), highlight_tags().
 """
 from __future__ import annotations
 
@@ -31,6 +31,18 @@ def allowed_tags() -> set[str]:
         tags.update(specifics)
     tags.update(OBSERVED_EXTRA)
     return tags
+
+
+# The General category whose Specifics say what an image is *selling* --
+# camera, battery life, durability -- as opposed to how it is framed. The
+# results table surfaces these separately, under "Highlights".
+HIGHLIGHT_GENERAL = "feature graphics"
+
+
+def highlight_tags(tags: list[str]) -> list[str]:
+    """The selling-point tags among `tags`, in the order given."""
+    family = set(TAXONOMY.get(HIGHLIGHT_GENERAL, []))
+    return [t for t in tags if normalise(t) in family]
 
 
 def normalise(tag: str) -> str:

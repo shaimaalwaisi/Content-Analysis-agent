@@ -7,7 +7,8 @@ from PIL import Image
 from agent.vlm import (MAX_IMAGE_DIM, MockVLM,
                                         OPENAI_COMPATIBLE, PROVIDERS,
                                         encode_image, get_client,
-                                        parse_tag_array, sniff_media_type)
+                                        parse_reasons, parse_tag_array,
+                                        sniff_media_type)
 
 
 def _decode(b64):
@@ -113,3 +114,60 @@ class TestGetClient:
 
     def test_providers_list_matches_the_factory(self):
         assert set(PROVIDERS) == {"anthropic", "mock", *OPENAI_COMPATIBLE}
+
+
+class TestParseReasons:
+    """Step 1 of a reasoned answer is free text, so parsing it is best-effort
+    by design: a missing reason must never cost a tag."""
+
+    ANSWER = (
+        "front angle - the TV is photographed face on\n"
+        "colour: three colourways are shown\n"
+        '["front angle", "colour"]')
+
+    def test_reads_a_reason_per_tag(self):
+        assert parse_reasons(self.ANSWER) == {
+            "front angle": "the TV is photographed face on",
+            "colour": "three colourways are shown"}
+
+    def test_the_answer_array_still_parses_alongside_reasons(self):
+        assert parse_tag_array(self.ANSWER) == ["front angle", "colour"]
+
+    def test_accepts_bulleted_and_numbered_lines(self):
+        reasons = parse_reasons("- camera - a lens is visible\n"
+                                "2. colour - two finishes shown")
+        assert reasons == {"camera": "a lens is visible",
+                           "colour": "two finishes shown"}
+
+    def test_reads_a_general_and_its_specific_from_one_line(self):
+        # What Haiku actually writes when a Specific needs its General.
+        reasons = parse_reasons(
+            "feature graphics: camera - a ZEISS lens is called out")
+        assert reasons["camera"] == "a ZEISS lens is called out"
+        assert reasons["feature graphics"].startswith("camera")
+
+    def test_a_dash_inside_a_reason_does_not_invent_a_tag(self):
+        reasons = parse_reasons(
+            "colour - three finishes - black, white, green - are shown")
+        assert list(reasons) == ["colour"], "only real tags may be nested"
+
+    def test_a_plain_answer_has_no_reasons(self):
+        assert parse_reasons('["physical design"]') == {}
+
+    def test_ignores_prose_that_is_not_a_reason_line(self):
+        assert parse_reasons("Here is my analysis of the image.") == {}
+
+    def test_survives_an_empty_response(self):
+        assert parse_reasons("") == {}
+
+
+class TestMockPredict:
+    def test_the_mock_client_reasons_too(self):
+        pred = MockVLM().predict("b64", "image/jpeg", context="Category: TV")
+        assert pred.tags == ["physical design", "front angle"]
+        assert set(pred.reasons) == set(pred.tags)
+
+    def test_predict_tags_is_unchanged(self):
+        assert MockVLM().predict_tags("b64", "image/jpeg",
+                                      context="Category: TV") == [
+            "physical design", "front angle"]

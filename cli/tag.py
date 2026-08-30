@@ -8,7 +8,8 @@ from agent.pipeline import results_to_dicts, run_folder
 from agent.vlm import get_client
 
 from .common import (add_enrich_args, add_memory_args, add_provider_args,
-                     build_memory, build_search_tool)
+                     add_results_db_args, build_memory, build_search_tool,
+                     build_store)
 from .runlog import write_run
 
 
@@ -17,9 +18,11 @@ def _write(records: list[dict], path: str) -> None:
     if path.endswith(".csv"):
         with open(path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["path", "category", "model", "tags"])
+            writer.writerow(["path", "category", "model", "highlights",
+                             "tags"])
             for r in records:
                 writer.writerow([r["path"], r["category"], r["model"],
+                                 "; ".join(r.get("highlights", [])),
                                  "; ".join(r["tags"])])
     else:
         with open(path, "w") as f:
@@ -37,6 +40,7 @@ def _tag_counts(records: list[dict]) -> dict:
 
 def run(args) -> None:
     from evaluation.runstats import RunStats
+    from tools import new_run_id
 
     client = get_client(args.provider, args.model)
 
@@ -50,14 +54,21 @@ def run(args) -> None:
         print(f"[{i}/{total}] {res.path.rsplit('/', 1)[-1]} -> {res.tags}")
 
     memory = build_memory(args)
+    store = build_store(args)
+    run_id = new_run_id() if store else None
     stats = RunStats()
     results = run_folder(args.input, client, limit=args.limit,
                          on_item=progress, examples=examples, memory=memory,
                          workers=args.workers,
-                         search_tool=build_search_tool(args), stats=stats)
+                         search_tool=build_search_tool(args), stats=stats,
+                         store=store, run_id=run_id)
     print(f"\n{stats.summary()}")
     if memory:
         print(memory.summary())
+    if store:
+        print(f"{store.summary()} as run {run_id} "
+              f"-- view them in the Results tab of the Streamlit app")
+        store.close()
 
     records = results_to_dicts(results)
 
@@ -92,4 +103,5 @@ def add_parser(sub) -> None:
     add_provider_args(p)
     add_memory_args(p)
     add_enrich_args(p)
+    add_results_db_args(p)
     p.set_defaults(func=run)

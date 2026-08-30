@@ -16,7 +16,7 @@ data/**/*.webp
 *.xlsx
 *.xls
 
-# Agent memory (local tag cache)
+# Local SQLite: the agent's tag cache and the results database
 *.sqlite3
 
 # Per-run records; keep the folder, not the output
