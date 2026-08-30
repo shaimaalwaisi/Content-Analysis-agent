@@ -408,8 +408,10 @@ def _render_results(run_id: str, key: str = "results") -> None:
     with st.expander("Why these tags? (the model's own reasons)"):
         explained = [r for r in rows if r["rationale"]]
         if not explained:
-            st.caption("No reasons recorded. The mock client does not "
-                       "inspect the image, so it has nothing to explain.")
+            st.caption("No reasons recorded for this run. Claude returns "
+                       "one with every tag, so these rows came from a client "
+                       "that only returns tags — a test stub, or an answer "
+                       "cached before reasons were kept.")
         for row in explained:
             st.markdown(f"**{row['image_name']}**")
             for tag, why in row["rationale"].items():
@@ -520,7 +522,7 @@ def _metrics_tab() -> None:
     else:
         _render_metrics(stats.as_dict(),
                         caption=f"This session: {stats.tasks} image(s) tagged "
-                                f"with {stats.model_id or 'the mock client'}.")
+                                f"with {stats.model_id or 'the model'}.")
 
     # A CLI run is a different run, so it is opt-in and clearly labelled --
     # never the thing shown by default.
