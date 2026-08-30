@@ -21,3 +21,6 @@ data/**/*.webp
 
 # Per-run records; keep the folder, not the output
 results/*.json
+
+# Generated demo animation: it ships embedded in the deck, not on its own
+agent-run.gif
