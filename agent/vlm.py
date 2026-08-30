@@ -141,9 +141,9 @@ class Prediction:
     product: str = ""
     description: str = ""
     specs: str = ""
-    # What the call was billed for. Zero when the provider reports no usage
-    # (the mock, a local server, a client implementing only predict_tags),
-    # which is why cost per task is reported as unpriced rather than as free.
+    # What the call was billed for. Zero when the caller reports no usage
+    # (a client implementing only predict_tags, say), which is why cost per
+    # task is reported as unpriced rather than as free.
     input_tokens: int = 0
     output_tokens: int = 0
 
@@ -187,7 +187,7 @@ class AnthropicVLM:
     max_tokens: int = 500      # tags, a reason each, and four detail lines
 
     def __post_init__(self) -> None:
-        from anthropic import Anthropic  # lazy: mock needs no dependency
+        from anthropic import Anthropic  # lazy: only a real run needs it
         self._client = Anthropic()
 
     def predict(self, image_b64, media_type, context=None, examples=None,

@@ -11,8 +11,8 @@ from .runlog import write_run
 
 
 def run(args) -> None:
-    # Imported here rather than at module scope so the mock path needs no key
-    # and `taxonomy` does not pay for langgraph.
+    # Imported here rather than at module scope so `taxonomy` does not pay
+    # for langgraph on its way to printing a word list.
     from evaluation import (compare_baselines, evaluate, failure_warning,
                             format_comparison)
     from evaluation.runstats import RunStats

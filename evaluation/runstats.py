@@ -155,7 +155,7 @@ class RunStats:
         cached = (f", {self.cache_hits} of {self.tasks} served from cache"
                   if self.cache_hits else "")
         if not (self.input_tokens or self.output_tokens):
-            money = "$0 (no tokens billed -- every task cached, or the mock)"
+            money = "$0 (no tokens billed -- every task served from cache)"
         elif cost is None:
             money = (f"unpriced ({self.model_id or 'no model id recorded'} is "
                      f"not in the price table)")

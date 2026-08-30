@@ -16,8 +16,8 @@ Two backends ship, behind one protocol:
                         all, since it needs live web results to do anything.
 
 Whatever a tool returns is only ever a *suggestion*: enrichment adds candidate
-tags, and `validate_tags` still decides what survives. A tool cannot put a tag
-outside the controlled vocabulary into the output.
+tags, and the vocabulary check in `analyze_image` still decides what survives.
+A tool cannot put a tag outside the controlled vocabulary into the output.
 """
 from __future__ import annotations
 

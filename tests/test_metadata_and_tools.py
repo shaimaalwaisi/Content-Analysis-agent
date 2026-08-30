@@ -112,7 +112,7 @@ class TestSyntheticSheet:
 
 class TestEvidenceRules:
     def test_every_enrichable_tag_is_in_the_taxonomy(self):
-        # Otherwise enrichment would propose tags validate_tags always drops.
+        # Otherwise enrichment would propose tags the vocabulary always drops.
         assert set(EVIDENCE_RULES) <= allowed_tags()
 
     def test_award_evidence_proposes_the_awards_tag_once(self):

@@ -79,7 +79,7 @@ class TestEnrichment:
         assert "awards" in tag_one(app, jpeg, context="Category: TV")
 
     def test_cannot_inject_a_tag_outside_the_vocabulary(self, jpeg, stub):
-        # Whatever a tool returns, validate_tags still decides.
+        # Whatever a tool returns, the vocabulary check still decides.
         rogue = [SearchResult("r", "sparkly unicorn award winner")]
         tags = tag_one(build_graph(stub, search_tool=FakeSearch(rogue)),
                        jpeg, context="Category: TV")
