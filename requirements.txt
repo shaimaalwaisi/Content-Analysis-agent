@@ -2,11 +2,11 @@
 # Install with:  pip install -r requirements.txt
 # Tested on Python 3.11.
 
-# The agent itself: load_image -> tag_image -> validate_tags state machine.
+# The agent itself: the prepare -> analyze_image -> persist state machine.
 langgraph>=1.2,<2
 
-# Vision-language providers. Both are imported lazily in vlm.py, so you only
-# need the one matching --provider; --provider mock needs neither.
+# Claude vision. Imported lazily in vlm.py, and again in tools/search.py for
+# --search-tool anthropic, so nothing loads it until a run calls out.
 anthropic>=1.2,<2
 
 # Downscales images before upload (vlm.encode_image); also a Streamlit dep.
