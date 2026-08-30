@@ -107,50 +107,29 @@ class TestEnrichment:
         mem.close()
 
 
-class ReasoningVLM:
-    """A client that reasons: it returns a tag list plus a why for each, and
-    can be told to answer differently once it has had feedback."""
-
-    model = "reasoning-1"
-
-    def __init__(self, first, second=None):
-        self.first, self.second = first, second or first
-        self.calls = 0
-        self.feedback_seen = []
-
-    def predict(self, image_b64, media_type, context=None, examples=None,
-                feedback=None):
-        from agent.vlm import Prediction
-        self.calls += 1
-        self.feedback_seen.append(feedback)
-        tags = self.first if feedback is None else self.second
-        return Prediction(list(tags), {t: f"because {t}" for t in tags})
-
-    def predict_tags(self, image_b64, media_type, context=None, examples=None):
-        return self.predict(image_b64, media_type, context, examples).tags
-
-
 class TestReasoningLoop:
-    def test_a_weak_answer_is_asked_again_and_a_good_one_is_not(self, jpeg):
-        weak = ReasoningVLM(["sparkly", "unicorn mode", "colour"],
-                            ["physical design", "colour"])
+    def test_a_weak_answer_is_asked_again_and_a_good_one_is_not(
+            self, jpeg, reasoning):
+        weak = reasoning(["sparkly", "unicorn mode", "colour"],
+                         ["physical design", "colour"])
         assert tag_one(build_graph(weak), jpeg) == ["physical design",
                                                     "colour"]
         assert weak.calls == 2
-        good = ReasoningVLM(["physical design", "front angle"])
+        good = reasoning(["physical design", "front angle"])
         tag_one(build_graph(good), jpeg)
         assert good.calls == 1, "a clean answer must not cost a second call"
 
-    def test_the_loop_is_bounded(self, jpeg):
-        client = ReasoningVLM(["sparkly", "unicorn mode"])
+    def test_the_loop_is_bounded(self, jpeg, reasoning):
+        client = reasoning(["sparkly", "unicorn mode"])
         assert tag_one(build_graph(client), jpeg) == []
         assert client.calls == 2, "the loop must stop, however bad the answer"
 
-    def test_the_second_prompt_names_the_rejected_tags(self, jpeg):
+    def test_the_second_prompt_names_the_rejected_tags(self, jpeg,
+                                                       reasoning):
         # An empty answer is weak too, so this also covers the re-prompt after
         # the model returns nothing at all.
-        client = ReasoningVLM(["sparkly", "unicorn mode", "colour"],
-                              ["physical design"])
+        client = reasoning(["sparkly", "unicorn mode", "colour"],
+                           ["physical design"])
         tag_one(build_graph(client), jpeg)
         first, second = client.feedback_seen
         assert first is None

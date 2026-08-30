@@ -84,20 +84,20 @@ class TestGraphWritesRows:
         assert row["highlights"] == ["camera"]
 
     def test_every_kept_tag_carries_its_reason_and_no_rejected_one_does(
-            self, jpeg, store):
-        from tests.test_graph import ReasoningVLM
-        client = ReasoningVLM(["physical design", "front angle", "sparkly"],
-                              ["physical design", "front angle"])
+            self, jpeg, store, reasoning):
+        client = reasoning(
+            ["physical design", "front angle", "sparkly"],
+            ["physical design", "front angle"])
         tag_one(build_graph(client, store=store, run_id="r1"), jpeg)
         row, = store.rows("r1")
         assert row["rationale"] == {"physical design": "because physical "
                                                        "design",
                                     "front angle": "because front angle"}
 
-    def test_a_re_prompted_image_records_both_attempts(self, jpeg, store):
-        from tests.test_graph import ReasoningVLM
-        client = ReasoningVLM(["sparkly", "unicorn mode"],
-                              ["physical design"])
+    def test_a_re_prompted_image_records_both_attempts(self, jpeg, store,
+                                                       reasoning):
+        client = reasoning(["sparkly", "unicorn mode"],
+                           ["physical design"])
         tag_one(build_graph(client, store=store, run_id="r1"), jpeg)
         row, = store.rows("r1")
         assert row["attempts"] == 2
