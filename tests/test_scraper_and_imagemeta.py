@@ -355,3 +355,56 @@ class TestBlockedPages:
                              html='<img src="https://tracker.invalid/p.jpg">')
         assert [r.skipped for r in rows] == ["off-site"]
         scraper.close()
+
+
+class TestSavedPages:
+    """A page off a disk, named the way a browser names one."""
+
+    # What Chrome writes to the Desktop for Sony's WF-1000XM6 page.
+    SAVED = ("WF-1000XM6 _ Wireless Noise Cancelling _ Headphones _ "
+             "Sony UK.html")
+    LIVE = "https://www.sony.co.uk/headphones/products/wf-1000xm6"
+
+    def test_a_saved_file_names_the_product_as_well_as_the_url_does(self):
+        from urllib.parse import quote
+        saved = "file:///C:/Users/Seyma/Desktop/" + quote(self.SAVED)
+        assert (category_for(saved), product_for(saved)) \
+            == (category_for(self.LIVE), product_for(self.LIVE)) \
+            == ("Headphone", "WF-1000XM6")
+
+    def test_a_path_to_a_file_that_is_not_here_says_to_hand_it_over(self):
+        from tools.scraper import local_page
+        with pytest.raises(FileNotFoundError, match="upload box"):
+            local_page("file:///C:/Users/Seyma/Desktop/absent.html")
+
+    def test_a_windows_url_is_read_as_a_windows_path(self, tmp_path):
+        from tools.scraper import local_path
+        assert local_path("file:///C:/Users/a%20b/page.html") \
+            == "C:/Users/a b/page.html"
+        real = tmp_path / self.SAVED
+        real.write_text("<img src='https://sony.scene7.com/x.jpg'>")
+        assert local_path(str(real)) == str(real)
+
+    def test_the_page_is_read_off_disk_and_only_images_are_requested(
+            self, tmp_path, monkeypatch):
+        from io import BytesIO
+
+        from PIL import Image
+        from tools import SonyScraper
+
+        page = tmp_path / self.SAVED
+        page.write_text("<img src='https://sony.scene7.com/is/image/hero.jpg'>")
+        buf = BytesIO()
+        Image.new("RGB", (500, 500), (90, 30, 140)).save(buf, format="JPEG")
+
+        class Response:
+            content = buf.getvalue()
+
+        scraper = SonyScraper(respect_robots=False, min_bytes=100)
+        monkeypatch.setattr(scraper, "_get", lambda url: Response()
+                            if url.endswith(".jpg")
+                            else pytest.fail(f"requested the page: {url}"))
+        rows = scraper.fetch(str(page), str(tmp_path / "out"))
+        assert [r.kept for r in rows] == [True]
+        assert os.path.join("Headphone", "WF-1000XM6") in rows[0].path
+        scraper.close()

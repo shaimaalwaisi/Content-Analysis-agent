@@ -41,7 +41,7 @@ import re
 from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Protocol
-from urllib.parse import urljoin, urlparse
+from urllib.parse import unquote, urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
 from PIL import Image
@@ -102,11 +102,58 @@ class ScraperTool(Protocol):
         ...
 
 
+def _naming_text(source: str) -> str:
+    """The part of a source worth reading a category and a model out of.
+
+    A page saved from a browser is named after the page title --
+    `WF-1000XM6 _ Wireless Noise Cancelling _ Headphones _ Sony UK.html` --
+    which carries the same two facts the product URL does. Turning its
+    separators into path separators lets one set of rules read both, so a
+    saved page lands in the same folder the live URL would have chosen.
+    """
+    if not is_local(source):
+        return source
+    name = os.path.basename(local_path(source) or source)
+    return os.path.splitext(name)[0].replace("_", "/").replace(" ", "/")
+
+
+def is_local(source: str) -> bool:
+    """Is this a file on a disk rather than a page on the web?"""
+    return source.startswith("file://") or (os.path.sep in source
+                                            and os.path.isfile(source))
+
+
+def local_path(source: str) -> str | None:
+    """The filesystem path a `file://` URL points at, or None."""
+    if not source.startswith("file://"):
+        return source if os.path.isfile(source) else None
+    path = unquote(urlparse(source).path)
+    # file:///C:/Users/... parses to /C:/Users/..., which no OS will open.
+    if re.match(r"^/[A-Za-z]:", path):
+        path = path[1:]
+    return path
+
+
+def local_page(source: str) -> str | None:
+    """A saved page's HTML when `source` names one, else None."""
+    if not is_local(source):
+        return None
+    path = local_path(source)
+    if not path or not os.path.isfile(path):
+        raise FileNotFoundError(
+            f"No file at {path or source} on this machine. If the page is "
+            f"saved on a different computer from the one running this, hand "
+            f"the file over instead of its path: the upload box in the Fetch "
+            f"tab, or --html on the command line.")
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        return handle.read()
+
+
 def category_for(url: str) -> str:
     """Which folder this page's images belong in. Unrecognised pages go to
     'Unknown' rather than being dropped: a picture with no category is still
     taggable, it just reaches the model without a context line."""
-    haystack = url.lower()
+    haystack = _naming_text(url).lower()
     for word, category in CATEGORY_WORDS:
         if word in haystack:
             return category
@@ -119,7 +166,8 @@ def product_for(url: str) -> str:
     Sony's product URLs end in the model number often enough that this beats
     reading it off the page, which is localised, and off the image, which is
     the model's guess."""
-    parts = [p for p in urlparse(url).path.split("/") if p and "." not in p]
+    parts = [p for p in urlparse(_naming_text(url)).path.split("/")
+             if p and "." not in p]
     for part in reversed(parts):
         if re.search(r"\d", part) and len(part) <= 40:
             return part.upper()
@@ -268,6 +316,7 @@ class SonyScraper:
         serves those from a CDN that answers, even where the site itself will
         not talk to a script.
         """
+        html = html if html is not None else local_page(url)
         if html is None and not self.allowed(url):
             log.warning("robots_disallowed", extra={"url": url})
             return [Fetched(url=url, skipped="robots.txt disallows this page")]

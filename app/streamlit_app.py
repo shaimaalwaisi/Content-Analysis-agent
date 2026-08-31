@@ -299,8 +299,10 @@ def _fetch_tab() -> None:
         "…or a page saved from your browser (.html)", type=["html", "htm"],
         help="Sony's edge refuses scripts on some networks. Save the product "
              "page in your browser (Ctrl+S, 'Webpage, HTML only') and drop it "
-             "here: the URL above still says which page it is, and the images "
-             "download from Sony's CDN, which does answer.")
+             "here — not its path in the box above, which only names a file "
+             "on your own computer. The saved page's name still says which "
+             "product it is, and the images download from Sony's CDN, which "
+             "does answer.")
 
     if source == "sony.com" and saved_page is None:
         st.caption("If sony.com refuses this machine — it does on many "
@@ -401,6 +403,12 @@ def _run_fetch(urls: list[str], dest: str, per_page: int, backend: str,
                          "path": row.path})
         st.session_state.fetched = {"dest": dest, "rows": rows,
                                     "skipped": skipped}
+    except FileNotFoundError as exc:
+        # A path typed into the URL box, pointing at a file this machine
+        # cannot see -- usually because the browser is on one computer and
+        # the app is on another. The uploader crosses that gap; a path never
+        # will.
+        st.warning(str(exc))
     except PageBlocked:
         # Not an error in the run -- the site simply will not talk to this
         # machine, and there is a way round it. Red text and a class name
