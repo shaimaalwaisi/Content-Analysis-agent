@@ -97,7 +97,7 @@ def run(args) -> None:
         print(f"Run record: {run_path}")
 
     if not kept:
-        return
+        return                     # the skip reasons above already said why
     if not args.tag:
         print(f"\nTag them with:\n"
               f"  python -m cli tag --input {args.dest} --few-shot 8")

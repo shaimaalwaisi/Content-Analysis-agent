@@ -408,3 +408,63 @@ class TestSavedPages:
         assert [r.kept for r in rows] == [True]
         assert os.path.join("Headphone", "WF-1000XM6") in rows[0].path
         scraper.close()
+
+
+class TestCdnImageUrls:
+    """Sony serves product shots from Scene7, where URLs carry no extension.
+
+    Filtering on `.jpg` discarded every one of them and kept the icons, which
+    is why a saved page fetched nothing at all.
+    """
+
+    BASE = "https://www.sony.co.uk/headphones/products/wf-1000xm6"
+    SCENE7 = ("https://sony.scene7.com/is/image/sonyglobalsolutions/"
+              "WF-1000XM6_Primary?fmt=png-alpha&wid=800")
+
+    def test_an_extensionless_cdn_url_is_a_candidate(self):
+        from tools.scraper import looks_like_image
+        assert looks_like_image(self.SCENE7)
+        assert image_urls(f'<img src="{self.SCENE7}">', self.BASE) \
+            == [self.SCENE7]
+
+    def test_icons_and_scripts_are_still_refused(self):
+        from tools.scraper import looks_like_image
+        assert not looks_like_image("https://sony.co.uk/assets/cart.svg")
+        assert not looks_like_image("https://sony.co.uk/a/bundle.js?wid=3")
+        assert not looks_like_image("https://sony.co.uk/page")
+
+    def test_the_saved_extension_comes_from_the_decoded_image(self, tmp_path,
+                                                              monkeypatch):
+        from io import BytesIO
+
+        from PIL import Image
+        from tools import SonyScraper
+
+        buf = BytesIO()
+        Image.new("RGBA", (500, 500), (90, 30, 140, 255)).save(buf, "PNG")
+
+        class Response:
+            content = buf.getvalue()
+
+        scraper = SonyScraper(respect_robots=False, min_bytes=100)
+        monkeypatch.setattr(scraper, "_get", lambda url: Response())
+        rows = scraper.fetch(self.BASE, str(tmp_path),
+                             html=f'<img src="{self.SCENE7}">')
+        # The URL says nothing about the format; the bytes do.
+        assert rows[0].path.endswith("WF-1000XM6_Primary.png")
+        assert read_metadata(rows[0].path).mime == "image/png"
+        scraper.close()
+
+    def test_a_page_with_no_image_links_says_that_not_nothing_new(
+            self, tmp_path, monkeypatch):
+        from tools import SonyScraper
+        scraper = SonyScraper(respect_robots=False)
+        monkeypatch.setattr(scraper, "_get",
+                            lambda url: pytest.fail(f"requested {url}"))
+        rows = scraper.fetch(self.BASE, str(tmp_path),
+                             html="<html><body>script-rendered</body></html>")
+        # "already on file" would be a lie: nothing was even considered.
+        assert len(rows) == 1 and not rows[0].kept
+        assert "no image links" in rows[0].skipped
+        assert "Copy outer HTML" in rows[0].skipped
+        scraper.close()

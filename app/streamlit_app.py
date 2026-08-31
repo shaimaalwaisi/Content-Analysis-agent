@@ -334,13 +334,36 @@ def _fetch_tab() -> None:
               help="; ".join(f"{n} {why}" for why, n in skipped.items())
                    or "Nothing was skipped.")
     if not rows:
-        st.info("Every picture on those pages is already on file. Tag them "
-                "from the folder below, or try another page.")
+        # Say which of the two empty results this is. They look identical on
+        # screen and mean opposite things: one is "nothing new", the other is
+        # "nothing was even considered".
+        if not skipped:
+            st.info("No images came back from that page at all.")
+        elif set(skipped) == {"already in the database"}:
+            st.info("Every picture on that page is already on file. Tag them "
+                    "from the folder below, or try another page.")
+        else:
+            st.info("Nothing was kept. " + "; ".join(
+                f"{n} × {why}" for why, n in skipped.items()))
 
-    per_row = 6
-    for start in range(0, len(rows), per_row):
-        for col, row in zip(st.columns(per_row), rows[start:start + per_row]):
-            col.image(row["path"], caption=row["Image name"], width="stretch")
+    # Only what is still there. The last fetch lives in session state across
+    # re-runs, so a folder moved or cleared behind the app would otherwise
+    # take the whole tab down with a missing-file error.
+    on_disk = [row for row in rows if os.path.exists(row["path"])]
+    if len(on_disk) < len(rows):
+        st.caption(f"{len(rows) - len(on_disk)} image(s) from the last fetch "
+                   f"are no longer on disk.")
+
+    if on_disk:
+        thumb = st.select_slider("Thumbnail size",
+                                 ["Small", "Medium", "Large"],
+                                 value="Small", key="thumb")
+        width = {"Small": 110, "Medium": 180, "Large": 260}[thumb]
+        per_row = {"Small": 10, "Medium": 7, "Large": 5}[thumb]
+        for start in range(0, len(on_disk), per_row):
+            for col, row in zip(st.columns(per_row),
+                                on_disk[start:start + per_row]):
+                col.image(row["path"], caption=row["Image name"], width=width)
 
     if rows:
         st.dataframe(
@@ -465,6 +488,13 @@ def _tag_folder(folder: str) -> None:
     if few_shot:
         from agent.fewshot import load_examples
         examples = load_examples(limit=few_shot)
+
+    from agent.pipeline import find_images
+    if not find_images(folder):
+        st.warning(f"There are no images in `{folder}` to tag. Fetch some "
+                   f"first — or point the box above at the folder that has "
+                   f"them.")
+        return
 
     run_id = _session_run()
     store = ResultStore(RESULTS_PATH)

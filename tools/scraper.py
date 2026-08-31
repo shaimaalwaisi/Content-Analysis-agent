@@ -58,6 +58,18 @@ USER_AGENT = ("ContentAnalysisAgent/1.0 "
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 
+# A retail CDN does not put .jpg on the end. Sony's Scene7 URLs read
+# .../is/image/sonyglobalsolutions/WF-1000XM6_Primary?fmt=png-alpha&wid=800 --
+# no extension anywhere, the format in the query string. Filtering on the
+# extension alone therefore discards every product shot on the page and leaves
+# the icons, which is exactly backwards.
+IMAGE_HINTS = ("/is/image/", "fmt=", "format=", "/image/upload/", "imwidth=",
+               "/dam/", "wid=", "hei=")
+
+# Extensions the filter must reject outright: a vector icon is never a product
+# photograph, whatever the rest of the URL looks like.
+NOT_IMAGES = (".svg", ".ico", ".gif", ".js", ".css", ".json", ".html")
+
 # URL words -> the folder name the agent already knows. The values must stay
 # spelled the way `agent.graph._infer_context` expects them, or the context
 # line goes missing and the model loses the one hint it cannot see.
@@ -216,18 +228,38 @@ def image_urls(html: str, base_url: str) -> list[str]:
         if not raw or raw.startswith("data:"):
             continue
         url = urljoin(base_url, raw.strip())
-        path = urlparse(url).path.lower()
-        if not path.endswith(IMAGE_EXTS) or url in seen:
+        if url in seen or not looks_like_image(url):
             continue
         seen.add(url)
         out.append(url)
     return out
 
 
-def _safe_name(url: str) -> str:
-    name = os.path.basename(urlparse(url).path) or "image.jpg"
+def looks_like_image(url: str) -> bool:
+    """Is this URL worth trying to download as a picture?
+
+    Deliberately generous: what actually decides is whether Pillow can open
+    what comes back, so a false positive costs one request and a skip line,
+    while a false negative loses a product shot silently.
+    """
+    path = urlparse(url).path.lower()
+    if path.endswith(NOT_IMAGES):
+        return False
+    return path.endswith(IMAGE_EXTS) or any(h in url.lower()
+                                            for h in IMAGE_HINTS)
+
+
+def _safe_name(url: str, fmt: str = "") -> str:
+    """A file name for a downloaded image: the CDN's own, plus the extension
+    the *decoded* image says it needs -- Scene7 names carry none, and guessing
+    .jpg for a PNG would leave the file lying about what it is."""
+    name = os.path.basename(urlparse(url).path) or "image"
     name = re.sub(r"[^A-Za-z0-9._-]", "_", name)[-80:]
-    return name if name.lower().endswith(IMAGE_EXTS) else name + ".jpg"
+    if name.lower().endswith(IMAGE_EXTS):
+        return name
+    ext = {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp",
+           "GIF": ".gif"}.get(fmt.upper(), ".jpg")
+    return os.path.splitext(name)[0] + ext
 
 
 @dataclass
@@ -328,6 +360,15 @@ class SonyScraper:
         log.info("page_read", extra={"url": url, "category": category,
                                      "product": product,
                                      "candidates": len(candidates)})
+        if not candidates:
+            # Saying "nothing new" here would be a lie: nothing was even
+            # considered. A saved page whose images are injected by script
+            # holds no image links at all, and that is the usual cause.
+            return [Fetched(url=url, category=category, product=product,
+                            skipped="no image links in this page — if you "
+                                    "saved it from a browser, save the page "
+                                    "as rendered (F12 → Elements → right-"
+                                    "click <html> → Copy outer HTML)")]
 
         out, kept = [], 0
         for image_url in candidates:
@@ -361,6 +402,7 @@ class SonyScraper:
             with Image.open(BytesIO(data)) as img:
                 img.load()
                 row.phash = perceptual_hash(img)
+                fmt = img.format or ""
         except Exception:
             row.skipped = "not a readable image"
             return row
@@ -370,7 +412,7 @@ class SonyScraper:
         self.seen.add(row.phash)
 
         os.makedirs(folder, exist_ok=True)
-        path = os.path.join(folder, _safe_name(url))
+        path = os.path.join(folder, _safe_name(url, fmt))
         if os.path.exists(path):           # same name, different picture
             stem, ext = os.path.splitext(path)
             path = f"{stem}-{row.phash[:6]}{ext}"
