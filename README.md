@@ -42,6 +42,21 @@ model nor the search tool can invent a tag. The feedback sent into the retry nam
 
 All three entry points compile the same graph through `build_graph`, so a change reaches every one.
 
+## Docker
+
+```bash
+cp .env.example .env                 # only tagging needs the key
+docker compose up app                # the UI on http://localhost:8501
+docker compose run --rm cli tag --input data/test --limit 10 --few-shot 8
+docker compose run --rm tests        # the suite, no key required
+```
+
+One image serves all three: the `app` service runs Streamlit, `cli` runs any subcommand, `tests`
+runs `pytest`. Your images and run records stay on the host (`./data`, `./results`); the two SQLite
+files live on a named volume, so rebuilding the image keeps the tagging history and the memory that
+makes a repeat run free. The image runs as uid 10001 — if it cannot write `./data`, run
+`UID=$(id -u) GID=$(id -g) docker compose up app`.
+
 ## Commands
 
 | Command | What it does |
@@ -110,7 +125,7 @@ evaluation/   quality.py (vs labels), runstats.py (workflow), consistency.py
 data/         images, meta_data.xlsx, and metadata.py: tags joined to image views
 cli/          terminal entry point, one module per subcommand
 app/          Streamlit UI: tag uploads, the results table, the metrics tab
-tests/        118 offline tests
+tests/        120 offline tests
 ```
 
 Dependencies point inward: the outer folders import `agent`; it imports none of them at runtime.
@@ -118,7 +133,7 @@ Dependencies point inward: the outer folders import `agent`; it imports none of 
 ## Tests
 
 ```bash
-pytest        # 118 tests, ~1.3 s, no network and no API key
+pytest        # 120 tests, ~1.3 s, no network and no API key
 ```
 
 Fixtures synthesise their own images, so a fresh clone runs them despite the dataset being

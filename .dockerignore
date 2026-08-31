@@ -1,0 +1,17 @@
+.git
+.github
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+*.sqlite3
+results/*.json
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.png
+data/**/*.webp
+*.gif
+*.png
+*.pdf
+*.pptx
+*.xlsx
