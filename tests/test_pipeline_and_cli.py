@@ -82,7 +82,7 @@ class TestRunFolder:
 class TestCLIParser:
     def test_every_subcommand_is_registered(self):
         parser = build_parser()
-        for cmd in ("taxonomy", "tag", "insights"):
+        for cmd in ("taxonomy", "fetch", "tag", "insights"):
             args = parser.parse_args([cmd] + _minimal_args(cmd))
             assert callable(args.func)
 
@@ -113,6 +113,7 @@ class TestCLIParser:
 
 def _minimal_args(cmd):
     return {"taxonomy": [], "tag": ["--input", "x"],
+            "fetch": ["--url", "https://sony.com/bravia/xr-65a95k"],
             "insights": ["--from-sheet"]}[cmd]
 
 

@@ -47,12 +47,19 @@ All three entry points compile the same graph through `build_graph`, so a change
 | Command | What it does |
 | --- | --- |
 | `taxonomy` | Print the 43-tag controlled vocabulary |
+| `fetch --url URL` | Download a Sony page's product images into `Category/Model` folders and record what each file is; `--tag` tags them in the same run |
 | `tag --input DIR` | Tag a folder; `--output` writes JSON or CSV |
 | `eval --train-dir DIR` | Score against the labels in the training filenames, versus baselines |
 | `tag --consistency` | Tag twice with different examples and score the agreement (no labels needed) |
 | `insights --from-sheet` | Rank tags by engagement using the metadata sheet |
 
 Useful flags: `--few-shot N`, `--workers N`, `--enrich`, `--no-memory`, `--no-db`.
+
+Images reach the agent two ways, and both end as a `Category/Model` folder, so the graph is
+the same either way: upload them, or fetch them. `fetch --scraper mock` draws its own pictures,
+so the second route can be tried with no network and no key.
+
+![sony.com, fetch, extract, store — then the tagging agent that was already there](ingestion-diagram.png)
 
 Every run writes a timestamped JSON record to `results/` — the settings, what came back, and what
 it cost. `tag` also writes one row per image into `results.sqlite3`, which is what the app's

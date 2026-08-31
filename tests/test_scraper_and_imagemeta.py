@@ -69,7 +69,7 @@ class TestNaming:
 
 class TestMockScraper:
     def test_writes_the_category_model_layout_the_agent_reads(self, tmp_path):
-        rows = MockScraper().fetch("https://sony.com/tv/xr", str(tmp_path))
+        rows = MockScraper().fetch("https://sony.com/bravia/xr-65a95k", str(tmp_path))
         assert all(r.kept for r in rows)
         assert rows[0].path.endswith(
             os.path.join("TV", "XR-65A95K", "shot_1.jpg"))
@@ -77,24 +77,24 @@ class TestMockScraper:
         assert read_metadata(rows[0].path).category == "TV"
 
     def test_limit_is_a_limit_on_images_kept(self, tmp_path):
-        assert len(MockScraper().fetch("https://sony.com/tv/x",
+        assert len(MockScraper().fetch("https://sony.com/bravia/xr-65a95k",
                                        str(tmp_path), limit=2)) == 2
 
     def test_a_hash_already_on_file_is_not_downloaded_again(self, tmp_path):
         scraper = MockScraper()
-        first = scraper.fetch("https://sony.com/tv/x", str(tmp_path / "a"))
-        again = scraper.fetch("https://sony.com/tv/x", str(tmp_path / "b"))
+        first = scraper.fetch("https://sony.com/bravia/xr-65a95k", str(tmp_path / "a"))
+        again = scraper.fetch("https://sony.com/bravia/xr-65a95k", str(tmp_path / "b"))
         assert [r.skipped for r in again] == ["already in the database"] * 4
         assert not (tmp_path / "b").exists(), "nothing was written"
         assert all(r.kept for r in first)
 
     def test_the_seen_set_can_come_from_the_database(self, tmp_path):
         store = ResultStore(str(tmp_path / "r.sqlite3"))
-        rows = MockScraper().fetch("https://sony.com/tv/x", str(tmp_path))
+        rows = MockScraper().fetch("https://sony.com/bravia/xr-65a95k", str(tmp_path))
         for row in rows:
             store.put_image(read_metadata(row.path), row.url)
         fresh = get_scraper("mock", seen=store.seen_hashes())
-        assert all(not r.kept for r in fresh.fetch("https://sony.com/tv/x",
+        assert all(not r.kept for r in fresh.fetch("https://sony.com/bravia/xr-65a95k",
                                                    str(tmp_path / "again")))
         store.close()
 
@@ -163,7 +163,7 @@ class TestPerceptualHash:
 class TestImagesTable:
     def test_rows_are_keyed_by_picture_not_by_file(self, tmp_path):
         store = ResultStore(str(tmp_path / "r.sqlite3"))
-        rows = MockScraper().fetch("https://sony.com/tv/x", str(tmp_path))
+        rows = MockScraper().fetch("https://sony.com/bravia/xr-65a95k", str(tmp_path))
         for row in rows:
             store.put_image(read_metadata(row.path), row.url)
         assert len(store.seen_hashes()) == 4
@@ -181,7 +181,94 @@ class TestImagesTable:
         store.put(Tagging(run_id=new_run_id(), image_path="/a/b.jpg",
                           tags=["colour"]))
         store.put_image(read_metadata(
-            MockScraper().fetch("https://sony.com/tv/x",
+            MockScraper().fetch("https://sony.com/bravia/xr-65a95k",
                                 str(tmp_path))[0].path))
         assert len(store.rows()) == 1 and len(store.images()) == 1
         store.close()
+
+
+class TestFetchCommand:
+    """`fetch` end to end on the mock backend: no network, no key, no model."""
+
+    URL = "https://sony.com/bravia/xr-65a95k"
+
+    def _args(self, tmp_path, *extra):
+        from cli.main import build_parser
+        return build_parser().parse_args(
+            ["--no-results", "fetch", "--url", self.URL,
+             "--scraper", "mock", "--dest", str(tmp_path / "fetched"),
+             "--db", str(tmp_path / "r.sqlite3"), *extra])
+
+    def test_downloads_records_and_prints_what_arrived(self, tmp_path, capsys):
+        from cli import fetch
+
+        args = self._args(tmp_path)
+        fetch.run(args)
+        out = capsys.readouterr().out
+
+        files = sorted(str(p) for p in
+                       (tmp_path / "fetched").rglob("*.jpg"))
+        assert len(files) == 4
+        assert os.path.join("TV", "XR-65A95K") in files[0], "the URL's folder"
+        assert "Fetched 4 new image(s)" in out
+        assert "320x240" in out, "the metadata tool ran"
+        assert "python -m cli tag --input" in out, "says what to do next"
+
+        store = ResultStore(str(tmp_path / "r.sqlite3"))
+        assert len(store.seen_hashes()) == 4
+        assert store.images()[0]["source_url"].startswith(self.URL)
+        store.close()
+
+    def test_a_second_run_downloads_nothing_and_says_so(self, tmp_path,
+                                                        capsys):
+        from cli import fetch
+
+        fetch.run(self._args(tmp_path))
+        capsys.readouterr()
+        fetch.run(self._args(tmp_path))
+        out = capsys.readouterr().out
+
+        assert "4 picture(s) already on file" in out
+        assert "skipped 4: 4 already in the database" in out
+        assert "Fetched 0 new image(s)" in out
+        assert len(list((tmp_path / "fetched").rglob("*.jpg"))) == 4
+
+    def test_repeated_url_flags_accumulate(self, tmp_path):
+        args = self._args(tmp_path, "--url", "https://sony.com/xperia-10-v")
+        # nargs='+' alone would let the second --url silently replace the first.
+        assert args.url == [self.URL, "https://sony.com/xperia-10-v"]
+
+    def test_two_pages_land_in_their_own_folders(self, tmp_path, capsys):
+        from cli import fetch
+
+        fetch.run(self._args(tmp_path, "--url", "https://sony.com/xperia-10-v",
+                             "--per-page", "2"))
+        folders = {str(p.relative_to(tmp_path / "fetched").parent)
+                   for p in (tmp_path / "fetched").rglob("*.jpg")}
+        assert folders == {os.path.join("TV", "XR-65A95K"),
+                           os.path.join("Mobile", "XPERIA-10-V")}
+        assert "Fetched 4 new image(s) from 2 page(s)" in capsys.readouterr().out
+
+    def test_tag_hands_the_fetched_folder_to_the_tagging_command(
+            self, tmp_path, monkeypatch):
+        from cli import fetch
+
+        seen = {}
+        monkeypatch.setattr(fetch.tag_command, "run",
+                            lambda args: seen.update(vars(args)))
+        fetch.run(self._args(tmp_path, "--tag", "--few-shot", "3"))
+        # --tag must run a real tagging run, not a stripped-down copy of one:
+        # the folder just fetched, and the tag flags as given.
+        assert seen["input"] == str(tmp_path / "fetched")
+        assert seen["limit"] is None, "--per-page is not a tagging limit"
+        assert seen["few_shot"] == 3 and seen["provider"] == "anthropic"
+
+    def test_no_db_still_fetches_it_just_remembers_nothing(self, tmp_path,
+                                                           capsys):
+        from cli import fetch
+
+        args = self._args(tmp_path, "--no-db")
+        fetch.run(args)
+        fetch.run(args)
+        assert "Fetched 4 new image(s)" in capsys.readouterr().out
+        assert not (tmp_path / "r.sqlite3").exists()

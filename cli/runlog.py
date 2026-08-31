@@ -21,7 +21,7 @@ DEFAULT_DIR = "results"
 _SETTINGS = ("provider", "model", "few_shot", "workers", "limit", "enrich",
              "search_tool", "no_memory", "sample", "input", "train_dir",
              "results", "metadata", "from_sheet", "synthetic", "metric",
-             "min_support")
+             "min_support", "url", "dest", "per_page", "scraper", "tag")
 
 
 def settings_of(args) -> dict:

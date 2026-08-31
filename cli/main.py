@@ -16,9 +16,9 @@ except Exception:
 
 from agent.logconf import setup_logging
 
-from . import evaluate, insights, tag, taxonomy
+from . import evaluate, fetch, insights, tag, taxonomy
 
-COMMANDS = (taxonomy, tag, evaluate, insights)
+COMMANDS = (taxonomy, fetch, tag, evaluate, insights)
 
 
 def build_parser() -> argparse.ArgumentParser:

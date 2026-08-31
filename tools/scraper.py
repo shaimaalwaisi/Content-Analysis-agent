@@ -35,6 +35,7 @@ vocabulary remains the only thing that can put one in the output.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from dataclasses import dataclass, field
@@ -301,30 +302,33 @@ class MockScraper:
     """Deterministic offline stand-in.
 
     Draws its own images instead of downloading any, so the fetch route can be
-    tested and demonstrated with no network and no key. It is a fixture, not a
-    scraper: the pictures are coloured rectangles and say nothing about a real
-    product.
+    tested and demonstrated with no network and no key. It names categories and
+    products through the same two functions the live scraper uses, because a
+    stand-in that answers differently from the real thing is worse than none.
+    It is a fixture: the pictures are coloured rectangles and say nothing about
+    a real product.
     """
 
-    pages: dict = field(default_factory=lambda: {
-        "tv": ("TV", "XR-65A95K", 4),
-        "xperia": ("Mobile", "XPERIA10MK5", 3),
-    })
+    count: int = 4                  # images a page is pretended to hold
     seen: set[str] = field(default_factory=set)
     size: tuple[int, int] = (320, 240)
 
     def fetch(self, url: str, dest: str, limit: int = 20) -> list[Fetched]:
-        category, product, count = next(
-            (v for k, v in self.pages.items() if k in url.lower()),
-            ("Unknown", "UNKNOWN", 2))
+        category, product = category_for(url), product_for(url)
         folder = os.path.join(dest, category, product)
+        # Two pages must not draw the same picture, or the second would be
+        # skipped as a duplicate of the first and the demo would look broken.
+        seed = int(hashlib.sha1(url.encode()).hexdigest()[:6], 16)
         out = []
-        for i in range(min(count, limit)):
-            image_url = f"{url.rstrip('/')}/shot_{i + 1}.jpg"
-            row = Fetched(url=image_url, category=category, product=product)
-            img = Image.new("RGB", self.size, (30 + i * 40, 60, 200 - i * 30))
-            img.paste(Image.new("RGB", (60, 60), (250, 250, 250)),
-                      (10 + i * 20, 10))       # something for a hash to bite on
+        for i in range(min(self.count, limit)):
+            row = Fetched(url=f"{url.rstrip('/')}/shot_{i + 1}.jpg",
+                          category=category, product=product)
+            img = Image.new("RGB", self.size, ((seed + i * 37) % 180 + 20,
+                                               (seed // 7 + i * 23) % 200,
+                                               (seed // 13 + i * 11) % 220))
+            img.paste(Image.new("RGB", (70, 70), (245, 245, 245)),
+                      (10 + (seed + i * 29) % 200,      # something for a hash
+                       10 + (seed // 5 + i * 17) % 140))  # to bite on
             row.phash = perceptual_hash(img)
             if row.phash in self.seen:
                 row.skipped = "already in the database"
@@ -333,6 +337,8 @@ class MockScraper:
             self.seen.add(row.phash)
             os.makedirs(folder, exist_ok=True)
             row.path = os.path.join(folder, f"shot_{i + 1}.jpg")
+            if os.path.exists(row.path):
+                row.path = f"{row.path[:-4]}-{row.phash[:6]}.jpg"
             img.save(row.path, format="JPEG")
             row.bytes = os.path.getsize(row.path)
             out.append(row)
