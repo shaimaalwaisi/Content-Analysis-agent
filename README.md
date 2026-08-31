@@ -62,12 +62,12 @@ so the second route can be tried with no network and no key.
 
 ![two ways in — a Sony page or an upload — meeting one Category/Model folder and one graph](ingestion-diagram.png)
 
-![one page fetched: four new images kept, then the same command again keeping none](fetch-run.gif)
+![one Sony page: twelve images fetched, described, stored and tagged](fetch-run.gif)
 
-The second run downloads nothing — every picture is recognised by its perceptual hash and skipped,
-and no model is called either way. The recording uses `--scraper mock`, which draws its own
-pictures through the identical code path; a live page needs a network Sony will talk to, or a page
-saved from your browser.
+A real run, start to finish: twelve product shots off Sony's CDN, each one described from the file
+itself, written to the `images` table, then tagged by the agent — with the model's own reason
+beside every tag. The page came from the browser, because sony.co.uk answers 403 to a script on
+most networks; the pictures come straight from the CDN, which does not.
 
 Every run writes a timestamped JSON record to `results/` — the settings, what came back, and what
 it cost. `tag` also writes one row per image into `results.sqlite3`, which is what the app's
