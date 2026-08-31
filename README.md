@@ -42,6 +42,38 @@ model nor the search tool can invent a tag. The feedback sent into the retry nam
 
 All three entry points compile the same graph through `build_graph`, so a change reaches every one.
 
+## Fetching from Sony
+
+Images reach the agent two ways, and both end as a `Category/Model` folder: upload them, or fetch
+them off a product page.
+
+![one Sony page: twelve images fetched, described, stored and tagged](fetch-run.gif)
+
+```bash
+python -m cli fetch --url https://www.sony.co.uk/headphones/products/wf-1000xm6 --tag --few-shot 8
+```
+
+That run is real: twelve product shots off Sony's CDN, each described from the file itself, written
+to the `images` table, then tagged — with the model's own reason beside every tag.
+
+![a Sony page through three tools into the folder the tagging agent reads](ingestion-diagram.png)
+
+- **fetch** (`tools/scraper.py`) — reads the page, finds the product shots, downloads the ones it
+  has not seen before. Honours `robots.txt`, backs off on a 429, and skips any picture whose
+  perceptual hash is already in the database, so a second run costs nothing.
+- **describe** (`tools/imagemeta.py`) — width, height, format, EXIF, `sha256`, and the perceptual
+  hash the deduplication turns on. Read off the file: no model is asked anything.
+- **store** (`tools/database.py`) — one row per picture in `results.sqlite3 · images`, keyed by
+  that hash. The tags land next door, in `taggings`.
+- **tag** (`agent/graph.py`) — the agent, unchanged. It reads the folder the fetch wrote, exactly
+  as it reads a folder you uploaded, which is why the fetch route needed no new node and no
+  classifier: the page URL names the category, and the folder carries it.
+
+`--scraper mock` draws its own pictures through the identical code path, so the route can be tried
+with no network and no key. If Sony's edge refuses your machine — it answers 403 to a script on
+most networks — save the page in your browser and pass it with `--html`, or drop it into the
+**Fetch from Sony** tab; the images themselves come from a CDN that does answer.
+
 ## Docker
 
 ```bash
@@ -70,19 +102,6 @@ makes a repeat run free. The image runs as uid 10001 — if it cannot write `./d
 | `insights --from-sheet` | Rank tags by engagement using the metadata sheet |
 
 Useful flags: `--few-shot N`, `--workers N`, `--enrich`, `--no-memory`, `--no-db`.
-
-Images reach the agent two ways, and both end as a `Category/Model` folder, so the graph is
-the same either way: upload them, or fetch them. `fetch --scraper mock` draws its own pictures,
-so the second route can be tried with no network and no key.
-
-![two ways in — a Sony page or an upload — meeting one Category/Model folder and one graph](ingestion-diagram.png)
-
-![one Sony page: twelve images fetched, described, stored and tagged](fetch-run.gif)
-
-A real run, start to finish: twelve product shots off Sony's CDN, each one described from the file
-itself, written to the `images` table, then tagged by the agent — with the model's own reason
-beside every tag. The page came from the browser, because sony.co.uk answers 403 to a script on
-most networks; the pictures come straight from the CDN, which does not.
 
 Every run writes a timestamped JSON record to `results/` — the settings, what came back, and what
 it cost. `tag` also writes one row per image into `results.sqlite3`, which is what the app's
@@ -135,12 +154,13 @@ out-perform spec detail.
 
 ```
 agent/        the agent: graph, vlm, taxonomy, prompts, memory, enrichment, retry, logging
-tools/        what it calls: search.py for non-visual tags, database.py for the results
+tools/        what it calls: scraper.py (fetch a page), imagemeta.py (read a file),
+              search.py (non-visual tags), database.py (the results and images tables)
 evaluation/   quality.py (vs labels), runstats.py (workflow), consistency.py
 data/         images, meta_data.xlsx, and metadata.py: tags joined to image views
 cli/          terminal entry point, one module per subcommand
-app/          Streamlit UI: tag uploads, the results table, the metrics tab
-tests/        118 offline tests
+app/          Streamlit UI: tag uploads, fetch from Sony, the results table, the metrics tab
+tests/        157 offline tests
 ```
 
 Dependencies point inward: the outer folders import `agent`; it imports none of them at runtime.
@@ -148,11 +168,13 @@ Dependencies point inward: the outer folders import `agent`; it imports none of 
 ## Tests
 
 ```bash
-pytest        # 118 tests, ~1.3 s, no network and no API key
+pytest        # 157 tests, ~1.7 s, no network and no API key
 ```
 
 Fixtures synthesise their own images, so a fresh clone runs them despite the dataset being
-gitignored.
+gitignored. The fetch route is covered the same way: `MockScraper` draws its own pictures, and the
+live scraper is tested through its pure parts — URL resolution, the CDN shapes it accepts, the
+naming rules, and what it does with a page it is refused.
 
 ## Notes on the data
 
