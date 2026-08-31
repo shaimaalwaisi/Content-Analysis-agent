@@ -302,6 +302,11 @@ def _fetch_tab() -> None:
              "here: the URL above still says which page it is, and the images "
              "download from Sony's CDN, which does answer.")
 
+    if source == "sony.com" and saved_page is None:
+        st.caption("If sony.com refuses this machine — it does on many "
+                   "networks — save the page in your browser and drop it "
+                   "above; only the images are downloaded then.")
+
     if st.button("Fetch images", type="primary"):
         urls = [u.strip() for u in urls_text.splitlines() if u.strip()]
         if not urls:
@@ -365,7 +370,8 @@ def _run_fetch(urls: list[str], dest: str, per_page: int, backend: str,
     inside the button block would vanish the moment the tag button was
     clicked.
     """
-    from tools import RESULTS_PATH, ResultStore, get_scraper, read_metadata
+    from tools import (RESULTS_PATH, PageBlocked, ResultStore, get_scraper,
+                       read_metadata)
 
     store = ResultStore(RESULTS_PATH)
     progress = st.progress(0.0, text="Fetching...")
@@ -395,13 +401,43 @@ def _run_fetch(urls: list[str], dest: str, per_page: int, backend: str,
                          "path": row.path})
         st.session_state.fetched = {"dest": dest, "rows": rows,
                                     "skipped": skipped}
+    except PageBlocked:
+        # Not an error in the run -- the site simply will not talk to this
+        # machine, and there is a way round it. Red text and a class name
+        # would say "something broke"; what the user needs is the steps.
+        _blocked_help()
     except Exception as exc:
-        # A blocked page, a bad URL or an offline machine is a normal outcome
-        # here, not a crash: say which and leave the last fetch on screen.
+        # A bad URL or an offline machine is a normal outcome here, not a
+        # crash: say which, and leave the last fetch on screen.
         st.error(f"Fetch failed: {type(exc).__name__}: {exc}")
     finally:
         progress.empty()
         store.close()
+
+
+def _blocked_help() -> None:
+    """What to do when the site refuses this machine.
+
+    Sony's edge answers 403 to every path from here, robots.txt included, for
+    any User-Agent -- it is refusing the connection, not the request. The way
+    through is to let a browser fetch the page, since the images themselves
+    come from a CDN that answers normally.
+    """
+    st.warning("Sony will not serve this machine the page — 403 to every "
+               "path, whatever we send. The images are still reachable, so "
+               "give it the page instead:")
+    st.markdown(
+        "1. Open that URL in **your own browser**.\n"
+        "2. Press **Ctrl+S** and save as **Webpage, HTML only**.\n"
+        "3. Drop the saved `.html` in the box above, keeping the URL there.\n"
+        "4. Press **Fetch images** again.\n\n"
+        "If that page turns out to hold only a picture or two, its images are "
+        "loaded by script rather than written into the HTML. Then use "
+        "**F12 → Elements → right-click `<html>` → Copy outer HTML**, paste "
+        "into a `.html` file, and drop that in instead — it captures the page "
+        "as rendered.")
+    st.caption("Or pick **Demo (no network)** above to see the whole route "
+               "run end to end without a site at all.")
 
 
 def _size(n: int) -> str:
