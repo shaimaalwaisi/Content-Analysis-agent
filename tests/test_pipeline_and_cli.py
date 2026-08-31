@@ -162,3 +162,34 @@ class TestRunRecords:
         from cli.runlog import settings_of
         args = build_parser().parse_args(["insights", "--from-sheet"])
         assert "provider" not in settings_of(args)
+
+
+class TestDatabasePathsAreOverridable:
+    """The container puts both SQLite files on a volume, and does it through
+    the environment rather than by passing flags to every command."""
+
+    def test_results_and_memory_read_their_env_vars(self, tmp_path,
+                                                    monkeypatch):
+        import importlib
+
+        import agent.memory
+        import tools.database
+        monkeypatch.setenv("RESULTS_DB", str(tmp_path / "r.sqlite3"))
+        monkeypatch.setenv("MEMORY_DB", str(tmp_path / "m.sqlite3"))
+        try:
+            assert importlib.reload(tools.database).DEFAULT_PATH \
+                == str(tmp_path / "r.sqlite3")
+            assert importlib.reload(agent.memory).DEFAULT_PATH \
+                == str(tmp_path / "m.sqlite3")
+        finally:
+            # Other tests import these modules; leave them as they were.
+            monkeypatch.delenv("RESULTS_DB")
+            monkeypatch.delenv("MEMORY_DB")
+            importlib.reload(tools.database)
+            importlib.reload(agent.memory)
+
+    def test_the_defaults_are_unchanged_without_them(self):
+        import agent.memory
+        import tools.database
+        assert tools.database.DEFAULT_PATH == "results.sqlite3"
+        assert agent.memory.DEFAULT_PATH == ".agent_memory.sqlite3"

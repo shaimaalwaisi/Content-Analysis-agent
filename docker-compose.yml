@@ -1,0 +1,51 @@
+# Two ways to run the same image.
+#
+#   docker compose up app                       the Streamlit UI on :8501
+#   docker compose run --rm cli taxonomy        any CLI command
+#   docker compose run --rm cli fetch --url https://www.sony.co.uk/... --tag
+#   docker compose run --rm tests               the suite, no key needed
+#
+# The key comes from .env (cp .env.example .env). Nothing else is required:
+# fetching and the tests run without one.
+
+x-app: &app
+  build: .
+  env_file:
+    # Optional: fetching and the tests need no key, so a fresh clone runs
+    # without writing a .env first.
+    - path: .env
+      required: false
+  environment:
+    RESULTS_DB: /data/results.sqlite3
+    MEMORY_DB: /data/.agent_memory.sqlite3
+  # The image runs as uid 10001, not root. If ./data or ./results is not
+  # writable by it, either `chmod -R a+w data results` once, or run as
+  # yourself:  UID=$(id -u) GID=$(id -g) docker compose up app
+  user: "${UID:-10001}:${GID:-10001}"
+  volumes:
+    # The images and the run records belong to you, not to the container.
+    - ./data:/app/data
+    - ./results:/app/results
+    # The two SQLite files, on a named volume: a rebuilt image keeps the
+    # tagging history and the memory that makes a repeat run free.
+    - agent-data:/data
+
+services:
+  app:
+    <<: *app
+    ports: ["8501:8501"]
+    restart: unless-stopped
+
+  # One-off commands. `run --rm` rather than `up`, because these exit.
+  cli:
+    <<: *app
+    entrypoint: ["python", "-m", "cli"]
+    profiles: ["cli"]
+
+  tests:
+    <<: *app
+    entrypoint: ["python", "-m", "pytest"]
+    profiles: ["cli"]
+
+volumes:
+  agent-data:

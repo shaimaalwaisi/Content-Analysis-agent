@@ -42,6 +42,21 @@ model nor the search tool can invent a tag. The feedback sent into the retry nam
 
 All three entry points compile the same graph through `build_graph`, so a change reaches every one.
 
+## Docker
+
+```bash
+cp .env.example .env                 # only tagging needs the key
+docker compose up app                # the UI on http://localhost:8501
+docker compose run --rm cli tag --input data/test --limit 10 --few-shot 8
+docker compose run --rm tests        # the suite, no key required
+```
+
+One image serves all three: the `app` service runs Streamlit, `cli` runs any subcommand, `tests`
+runs `pytest`. Your images and run records stay on the host (`./data`, `./results`); the two SQLite
+files live on a named volume, so rebuilding the image keeps the tagging history and the memory that
+makes a repeat run free. The image runs as uid 10001 — if it cannot write `./data`, run
+`UID=$(id -u) GID=$(id -g) docker compose up app`.
+
 ## Commands
 
 | Command | What it does |

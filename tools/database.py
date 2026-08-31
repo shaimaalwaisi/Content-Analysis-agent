@@ -28,7 +28,10 @@ from agent.logconf import get_logger
 
 log = get_logger(__name__)
 
-DEFAULT_PATH = "results.sqlite3"
+# Overridable so a container can put the file on a mounted volume; the
+# default keeps a bare `python -m cli tag` writing into the repo root, as it
+# always has.
+DEFAULT_PATH = os.environ.get("RESULTS_DB", "results.sqlite3")
 
 
 def new_run_id(now: float | None = None) -> str:

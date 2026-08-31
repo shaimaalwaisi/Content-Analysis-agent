@@ -19,7 +19,9 @@ import sqlite3
 import threading
 import time
 
-DEFAULT_PATH = ".agent_memory.sqlite3"
+# Overridable for the same reason as the results database: a container puts
+# it on a volume, everything else keeps the repo-root default.
+DEFAULT_PATH = os.environ.get("MEMORY_DB", ".agent_memory.sqlite3")
 
 
 def make_key(image_b64: str, model: str, context: str | None,
