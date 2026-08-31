@@ -36,14 +36,16 @@ because that is a statement about the taxonomy rather than about searching.
 from .database import DEFAULT_PATH as RESULTS_PATH
 from .database import ResultStore, Tagging, new_run_id
 from .imagemeta import ImageMeta, hamming, perceptual_hash, read_metadata
-from .scraper import (Fetched, MockScraper, ScraperTool, SonyScraper,
-                      category_for, get_scraper, image_urls, product_for)
+from .scraper import (Fetched, MockScraper, PageBlocked, ScraperTool,
+                      SonyScraper, category_for, get_scraper, image_urls,
+                      product_for)
 from .search import (AnthropicWebSearch, MockSearchTool, SearchTool,
                      get_search_tool)
 from agent.enrichment import SearchResult
 
 __all__ = ["AnthropicWebSearch", "Fetched", "ImageMeta", "MockScraper",
-           "MockSearchTool", "RESULTS_PATH", "ResultStore", "ScraperTool",
+           "MockSearchTool", "PageBlocked", "RESULTS_PATH", "ResultStore",
+           "ScraperTool",
            "SearchResult", "SearchTool", "SonyScraper", "Tagging",
            "category_for", "get_scraper", "get_search_tool", "hamming",
            "image_urls", "new_run_id", "perceptual_hash", "product_for",

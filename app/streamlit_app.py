@@ -295,13 +295,25 @@ def _fetch_tab() -> None:
                          help="Images land in <folder>/Category/Model/, which "
                               "is what tells the agent what it is looking at.")
 
+    saved_page = st.file_uploader(
+        "…or a page saved from your browser (.html)", type=["html", "htm"],
+        help="Sony's edge refuses scripts on some networks. Save the product "
+             "page in your browser (Ctrl+S, 'Webpage, HTML only') and drop it "
+             "here: the URL above still says which page it is, and the images "
+             "download from Sony's CDN, which does answer.")
+
     if st.button("Fetch images", type="primary"):
         urls = [u.strip() for u in urls_text.splitlines() if u.strip()]
         if not urls:
             st.warning("Paste at least one page URL first.")
+        elif saved_page is not None and len(urls) != 1:
+            st.warning("A saved page is one page: leave exactly one URL "
+                       "above, the address it came from.")
         else:
             _run_fetch(urls, dest, int(per_page),
-                       "mock" if source.startswith("Demo") else "sony")
+                       "mock" if source.startswith("Demo") else "sony",
+                       html=(saved_page.getvalue().decode("utf-8", "replace")
+                             if saved_page is not None else None))
 
     fetched = st.session_state.get("fetched")
     if not fetched:
@@ -344,8 +356,8 @@ def _fetch_tab() -> None:
         _tag_folder(folder)
 
 
-def _run_fetch(urls: list[str], dest: str, per_page: int,
-               backend: str) -> None:
+def _run_fetch(urls: list[str], dest: str, per_page: int, backend: str,
+               html: str | None = None) -> None:
     """Download the pages' images and record what each file is.
 
     Results go into session state rather than being drawn here: Streamlit
@@ -362,7 +374,8 @@ def _run_fetch(urls: list[str], dest: str, per_page: int,
         fetched = []
         try:
             for i, url in enumerate(urls, 1):
-                fetched += scraper.fetch(url, dest, limit=per_page)
+                fetched += scraper.fetch(url, dest, limit=per_page,
+                                         html=html)
                 progress.progress(i / len(urls),
                                   text=f"Read {i} of {len(urls)} page(s)")
         finally:

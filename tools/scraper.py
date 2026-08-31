@@ -87,8 +87,18 @@ class Fetched:
         return not self.skipped
 
 
+class PageBlocked(RuntimeError):
+    """The site would not serve the page to this machine.
+
+    Its own message says what to do about it, because the answer is never
+    "try again": a 403 from an edge like Sony's is a decision about who is
+    asking, not a transient failure.
+    """
+
+
 class ScraperTool(Protocol):
-    def fetch(self, url: str, dest: str, limit: int = 20) -> list[Fetched]:
+    def fetch(self, url: str, dest: str, limit: int = 20,
+              html: str | None = None) -> list[Fetched]:
         ...
 
 
@@ -201,6 +211,24 @@ class SonyScraper:
             return resp
         return call_with_retry(once, attempts=self.attempts)
 
+    def _page(self, url: str) -> str:
+        """The page's HTML, or a refusal that says what to do instead."""
+        try:
+            return self._get(url).text
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code",
+                             None)
+            if status not in (401, 403):
+                raise
+            host = urlparse(url).hostname or "the site"
+            raise PageBlocked(
+                f"{host} refused this machine (HTTP {status}). Sony's edge "
+                f"turns away datacentre and non-browser clients -- it refuses "
+                f"robots.txt too, so this is not a header to tweak. Open the "
+                f"page in your own browser, save it (Ctrl+S, 'Webpage, HTML "
+                f"only'), and pass the file: the images come from a CDN that "
+                f"does answer.") from exc
+
     def _host_allowed(self, url: str) -> bool:
         host = (urlparse(url).hostname or "").lower()
         return any(host == h or host.endswith("." + h)
@@ -227,17 +255,26 @@ class SonyScraper:
         parser = self._robots[host]
         return parser is None or parser.can_fetch(USER_AGENT, url)
 
-    def fetch(self, url: str, dest: str, limit: int = 20) -> list[Fetched]:
+    def fetch(self, url: str, dest: str, limit: int = 20,
+              html: str | None = None) -> list[Fetched]:
         """Download up to `limit` new images from one page into
         `dest/<Category>/<Model>/`. Every candidate comes back, kept or not,
-        so a caller can report what was skipped and why."""
-        if not self.allowed(url):
+        so a caller can report what was skipped and why.
+
+        Pass `html` to use a page you already have -- one saved out of your
+        own browser, say -- while `url` still names which page it is, so the
+        category, the product and the relative image URLs resolve exactly as
+        they would have. The images themselves are still downloaded: Sony
+        serves those from a CDN that answers, even where the site itself will
+        not talk to a script.
+        """
+        if html is None and not self.allowed(url):
             log.warning("robots_disallowed", extra={"url": url})
             return [Fetched(url=url, skipped="robots.txt disallows this page")]
 
         category, product = category_for(url), product_for(url)
         folder = os.path.join(dest, category, product)
-        page = self._get(url).text
+        page = html if html is not None else self._page(url)
         candidates = image_urls(page, url)
         log.info("page_read", extra={"url": url, "category": category,
                                      "product": product,
@@ -313,7 +350,10 @@ class MockScraper:
     seen: set[str] = field(default_factory=set)
     size: tuple[int, int] = (320, 240)
 
-    def fetch(self, url: str, dest: str, limit: int = 20) -> list[Fetched]:
+    def fetch(self, url: str, dest: str, limit: int = 20,
+              html: str | None = None) -> list[Fetched]:
+        # `html` is accepted and ignored: a stand-in that drew different
+        # pictures for a saved page would be testing itself, not the route.
         category, product = category_for(url), product_for(url)
         folder = os.path.join(dest, category, product)
         # Two pages must not draw the same picture, or the second would be

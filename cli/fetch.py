@@ -43,6 +43,10 @@ def _skipped_summary(rows) -> str:
 def run(args) -> None:
     from tools import get_scraper, read_metadata
 
+    if args.html and len(args.url) != 1:
+        raise SystemExit("--html reads one saved page, so give exactly one "
+                         "--url: the address that page came from.")
+
     store = build_store(args)
     seen = store.seen_hashes() if store else set()
     if seen:
@@ -50,11 +54,19 @@ def run(args) -> None:
               f"downloaded again.")
     scraper = get_scraper(args.scraper, seen=seen)
 
+    saved = None
+    if args.html:
+        with open(args.html, encoding="utf-8", errors="replace") as handle:
+            saved = handle.read()
+        print(f"Reading {args.html} as the page for {args.url[0]}; only the "
+              f"images are downloaded.")
+
     kept, skipped, records = [], [], []
     try:
         for url in args.url:
             print(f"\n{url}")
-            rows = scraper.fetch(url, args.dest, limit=args.per_page)
+            rows = scraper.fetch(url, args.dest, limit=args.per_page,
+                                 html=saved)
             page_skipped = [r for r in rows if not r.kept]
             for row in (r for r in rows if r.kept):
                 # The metadata is read from the file on disk, so what lands in
@@ -105,6 +117,10 @@ def add_parser(sub) -> None:
     # than the last one silently winning.
     p.add_argument("--url", nargs="+", action="extend", required=True,
                    metavar="URL", help="product or category page(s) to read")
+    p.add_argument("--html", default=None, metavar="FILE",
+                   help="a page saved from your browser to read instead of "
+                        "fetching it, for sites that refuse a script. Needs "
+                        "exactly one --url, which says which page it is.")
     p.add_argument("--dest", default="data/fetched",
                    help="where the Category/Model folders are written")
     p.add_argument("--per-page", type=int, default=20, metavar="N",

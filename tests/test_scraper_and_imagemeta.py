@@ -272,3 +272,86 @@ class TestFetchCommand:
         fetch.run(args)
         assert "Fetched 4 new image(s)" in capsys.readouterr().out
         assert not (tmp_path / "r.sqlite3").exists()
+
+
+class TestBlockedPages:
+    """Sites that refuse a script -- the case the live scraper actually met."""
+
+    URL = "https://www.sony.co.uk/headphones/products/wf-1000xm6"
+
+    def _scraper(self):
+        from tools import SonyScraper
+        return SonyScraper(respect_robots=False)   # no network in the tests
+
+    def _refuse(self, status):
+        class Response:
+            status_code = status
+
+        class Refused(Exception):
+            response = Response()
+
+        def _get(url):
+            raise Refused(f"{status} for {url}")
+        return _get
+
+    def test_a_403_says_what_to_do_instead_of_what_broke(self, tmp_path,
+                                                         monkeypatch):
+        from tools import PageBlocked
+        scraper = self._scraper()
+        monkeypatch.setattr(scraper, "_get", self._refuse(403))
+        with pytest.raises(PageBlocked) as caught:
+            scraper.fetch(self.URL, str(tmp_path))
+        message = str(caught.value)
+        assert "www.sony.co.uk" in message and "403" in message
+        # The actionable half matters more than the diagnosis.
+        assert "save it" in message.lower() or "Ctrl+S" in message
+        scraper.close()
+
+    def test_other_failures_are_not_dressed_up_as_a_block(self, tmp_path,
+                                                          monkeypatch):
+        from tools import PageBlocked
+        scraper = self._scraper()
+        monkeypatch.setattr(scraper, "_get", self._refuse(500))
+        with pytest.raises(Exception) as caught:
+            scraper.fetch(self.URL, str(tmp_path))
+        assert not isinstance(caught.value, PageBlocked)
+        scraper.close()
+
+    def test_a_saved_page_needs_no_page_request_at_all(self, tmp_path,
+                                                       monkeypatch):
+        from PIL import Image
+        from io import BytesIO
+
+        scraper = self._scraper()
+        buf = BytesIO()
+        Image.new("RGB", (600, 400), (10, 120, 200)).save(buf, format="JPEG")
+        body = buf.getvalue()
+
+        class Response:
+            content = body
+
+        def _get(url):
+            # The page must never be requested; only the images.
+            assert url.endswith(".jpg"), f"asked for the page: {url}"
+            return Response()
+
+        monkeypatch.setattr(scraper, "_get", _get)
+        monkeypatch.setattr(scraper, "min_bytes", 100)
+        rows = scraper.fetch(
+            self.URL, str(tmp_path),
+            html='<img src="https://sony.scene7.com/is/image/hero.jpg">')
+        assert [r.kept for r in rows] == [True]
+        # The URL still names the picture, even though the page came off disk.
+        assert os.path.join("Headphone", "WF-1000XM6") in rows[0].path
+        assert read_metadata(rows[0].path).width == 600
+        scraper.close()
+
+    def test_off_site_images_in_a_saved_page_are_not_downloaded(
+            self, tmp_path, monkeypatch):
+        scraper = self._scraper()
+        monkeypatch.setattr(scraper, "_get",
+                            lambda url: pytest.fail(f"requested {url}"))
+        rows = scraper.fetch(self.URL, str(tmp_path),
+                             html='<img src="https://tracker.invalid/p.jpg">')
+        assert [r.skipped for r in rows] == ["off-site"]
+        scraper.close()

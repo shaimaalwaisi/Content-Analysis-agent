@@ -48,6 +48,7 @@ All three entry points compile the same graph through `build_graph`, so a change
 | --- | --- |
 | `taxonomy` | Print the 43-tag controlled vocabulary |
 | `fetch --url URL` | Download a Sony page's product images into `Category/Model` folders and record what each file is; `--tag` tags them in the same run |
+| `fetch --url URL --html FILE` | The same, reading a page you saved from your browser — for networks Sony's edge refuses |
 | `tag --input DIR` | Tag a folder; `--output` writes JSON or CSV |
 | `eval --train-dir DIR` | Score against the labels in the training filenames, versus baselines |
 | `tag --consistency` | Tag twice with different examples and score the agreement (no labels needed) |
