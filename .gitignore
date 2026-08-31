@@ -13,6 +13,7 @@ data/**/*.webp
 
 # Task brief / supplied documents - not ours to redistribute
 *.pdf
+*.pptx
 *.xlsx
 *.xls
 
