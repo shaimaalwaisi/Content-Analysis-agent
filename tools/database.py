@@ -9,6 +9,11 @@ Sharing one file would mean clearing the cache also deleted the history.
 Rows carry only what the agent itself knows (name, path, category, product,
 tags, the model's reasons). Price and view counts stay in meta_data.xlsx and
 are joined at display time, so correcting the sheet never means re-tagging.
+
+A second table, `images`, holds what `tools.imagemeta` reads off a file --
+size, format, EXIF, hashes. It is keyed by perceptual hash rather than by run,
+because its job is to answer "have we had this picture before?" for the
+scraper, which is asked *before* there is a run to attribute it to.
 """
 from __future__ import annotations
 
@@ -97,7 +102,72 @@ class ResultStore:
         self._conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS taggings_run_image "
             "ON taggings (run_id, image_path)")
+        # What the scraper and the metadata tool write. Keyed by perceptual
+        # hash: the same picture served twice at two sizes is one row, which
+        # is the whole point of hashing it perceptually.
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS images ("
+            "  phash TEXT PRIMARY KEY,"
+            "  sha256 TEXT,"
+            "  created REAL NOT NULL,"
+            "  image_name TEXT NOT NULL,"
+            "  image_path TEXT NOT NULL,"
+            "  source_url TEXT,"
+            "  category TEXT,"
+            "  product TEXT,"
+            "  fmt TEXT,"
+            "  mime TEXT,"
+            "  width INTEGER,"
+            "  height INTEGER,"
+            "  bytes INTEGER,"
+            "  shot_at TEXT,"
+            "  camera TEXT)")
         self._conn.commit()
+
+    # ---- images ----------------------------------------------------------
+    def put_image(self, meta, source_url: str = "") -> None:
+        """Record one image file. Re-recording the same picture updates the
+        row instead of adding a second one, so a re-fetch is harmless."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO images (phash, sha256, created, image_name, "
+                " image_path, source_url, category, product, fmt, mime, width,"
+                " height, bytes, shot_at, camera) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT (phash) DO UPDATE SET "
+                " image_path=excluded.image_path,"
+                " source_url=excluded.source_url,"
+                " category=excluded.category, product=excluded.product,"
+                " width=excluded.width, height=excluded.height,"
+                " bytes=excluded.bytes",
+                (meta.phash, meta.sha256, time.time(), meta.name, meta.path,
+                 source_url, meta.category, meta.product, meta.fmt, meta.mime,
+                 meta.width, meta.height, meta.bytes, meta.shot_at,
+                 " ".join(x for x in (meta.camera_make, meta.camera_model)
+                          if x)))
+            self._conn.commit()
+
+    def seen_hashes(self) -> set[str]:
+        """Every perceptual hash on file -- hand this to a scraper and it
+        stops downloading pictures we already have."""
+        with self._lock:
+            rows = self._conn.execute("SELECT phash FROM images").fetchall()
+        return {r["phash"] for r in rows}
+
+    def images(self, category: str | None = None,
+               limit: int | None = None) -> list[dict]:
+        """Recorded files, newest first, optionally one category."""
+        sql = "SELECT * FROM images"
+        params: tuple = ()
+        if category:
+            sql += " WHERE category = ?"
+            params = (category,)
+        sql += " ORDER BY created DESC"
+        if limit:
+            sql += " LIMIT ?"
+            params += (limit,)
+        with self._lock:
+            return [dict(r) for r in self._conn.execute(sql, params)]
 
     def put(self, row: Tagging) -> None:
         with self._lock:
