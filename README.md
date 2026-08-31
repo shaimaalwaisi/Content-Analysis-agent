@@ -60,7 +60,13 @@ Images reach the agent two ways, and both end as a `Category/Model` folder, so t
 the same either way: upload them, or fetch them. `fetch --scraper mock` draws its own pictures,
 so the second route can be tried with no network and no key.
 
-![sony.com, fetch, extract, store — then the tagging agent that was already there](ingestion-diagram.png)
+![two ways in — a Sony page or an upload — meeting one Category/Model folder and one graph](ingestion-diagram.png)
+
+![fetching a product page twice: four new images, then none](fetch-run.gif)
+
+The second run downloads nothing: every picture is recognised by its perceptual hash and skipped.
+The recording uses `--scraper mock`, which draws its own images through the identical code path —
+a live page needs a network Sony will talk to, or a page saved from your browser.
 
 Every run writes a timestamped JSON record to `results/` — the settings, what came back, and what
 it cost. `tag` also writes one row per image into `results.sqlite3`, which is what the app's
