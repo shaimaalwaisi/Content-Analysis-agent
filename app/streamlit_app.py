@@ -265,6 +265,173 @@ def _tagging_tab() -> None:
         _render_results(run_id, key="tagging")
 
 
+def _fetch_tab() -> None:
+    """Fetch images from sony.com instead of uploading them.
+
+    The two routes meet immediately: a fetch writes a `Category/Model` folder
+    and one row per picture, which is exactly what an upload produces, so the
+    tag button below runs the same graph the **Tag images** tab runs. Nothing
+    about tagging differs between them.
+
+    What is fetched is remembered by perceptual hash, so pressing Fetch twice
+    downloads nothing the second time -- the skipped count says so rather than
+    quietly showing an empty result.
+    """
+    urls_text = st.text_area(
+        "Sony product or category page(s) — one URL per line",
+        placeholder="https://www.sony.co.uk/electronics/televisions/"
+                    "xr-65a95k\nhttps://www.sony.co.uk/electronics/"
+                    "smartphones/xperia-10-v",
+        height=90)
+    c1, c2, c3 = st.columns([1, 2, 2])
+    per_page = c1.number_input("Images per page", 1, 50, 12,
+                               help="Stop after this many new images from "
+                                    "each page.")
+    source = c2.radio(
+        "Where from", ["sony.com", "Demo (no network)"], horizontal=True,
+        help="Demo draws its own coloured images through the same code path, "
+             "so the route can be tried without hitting a real site.")
+    dest = c3.text_input("Save into", value="data/fetched",
+                         help="Images land in <folder>/Category/Model/, which "
+                              "is what tells the agent what it is looking at.")
+
+    if st.button("Fetch images", type="primary"):
+        urls = [u.strip() for u in urls_text.splitlines() if u.strip()]
+        if not urls:
+            st.warning("Paste at least one page URL first.")
+        else:
+            _run_fetch(urls, dest, int(per_page),
+                       "mock" if source.startswith("Demo") else "sony")
+
+    fetched = st.session_state.get("fetched")
+    if not fetched:
+        st.caption("Fetching needs no API key — only tagging calls Claude.")
+        return
+
+    rows, skipped = fetched["rows"], fetched["skipped"]
+    c1, c2, _spacer = st.columns([1, 1, 6])
+    c1.metric("New images", len(rows))
+    c2.metric("Skipped", sum(skipped.values()),
+              help="; ".join(f"{n} {why}" for why, n in skipped.items())
+                   or "Nothing was skipped.")
+    if not rows:
+        st.info("Every picture on those pages is already on file. Tag them "
+                "from the folder below, or try another page.")
+
+    per_row = 6
+    for start in range(0, len(rows), per_row):
+        for col, row in zip(st.columns(per_row), rows[start:start + per_row]):
+            col.image(row["path"], caption=row["Image name"], width="stretch")
+
+    if rows:
+        st.dataframe(
+            [{k: v for k, v in row.items() if k != "path"} for row in rows],
+            width="stretch", hide_index=True,
+            column_config={
+                "Image name": st.column_config.TextColumn(width="medium"),
+                "Category": st.column_config.TextColumn(width="small"),
+                "Product": st.column_config.TextColumn(width="small"),
+                "Size": st.column_config.TextColumn(width="small"),
+                "Pixels": st.column_config.TextColumn(width="small"),
+                "Source": st.column_config.LinkColumn(width="large")})
+
+    st.divider()
+    folder = fetched["dest"]
+    st.caption(f"Tagging runs over everything in `{folder}`, not only what "
+               f"this fetch added. Images tagged before are served from "
+               f"memory, so they cost nothing the second time.")
+    if st.button(f"Tag the images in {folder}", type="primary"):
+        _tag_folder(folder)
+
+
+def _run_fetch(urls: list[str], dest: str, per_page: int,
+               backend: str) -> None:
+    """Download the pages' images and record what each file is.
+
+    Results go into session state rather than being drawn here: Streamlit
+    re-runs the script on every widget press, and a fetch that only existed
+    inside the button block would vanish the moment the tag button was
+    clicked.
+    """
+    from tools import RESULTS_PATH, ResultStore, get_scraper, read_metadata
+
+    store = ResultStore(RESULTS_PATH)
+    progress = st.progress(0.0, text="Fetching...")
+    try:
+        scraper = get_scraper(backend, seen=store.seen_hashes())
+        fetched = []
+        try:
+            for i, url in enumerate(urls, 1):
+                fetched += scraper.fetch(url, dest, limit=per_page)
+                progress.progress(i / len(urls),
+                                  text=f"Read {i} of {len(urls)} page(s)")
+        finally:
+            scraper.close()
+
+        rows, skipped = [], {}
+        for row in fetched:
+            if not row.kept:
+                skipped[row.skipped] = skipped.get(row.skipped, 0) + 1
+                continue
+            meta = read_metadata(row.path, row.category, row.product)
+            store.put_image(meta, row.url)
+            rows.append({"Image name": meta.name, "Category": meta.category,
+                         "Product": meta.product,
+                         "Pixels": f"{meta.width}x{meta.height}",
+                         "Size": _size(meta.bytes), "Source": row.url,
+                         "path": row.path})
+        st.session_state.fetched = {"dest": dest, "rows": rows,
+                                    "skipped": skipped}
+    except Exception as exc:
+        # A blocked page, a bad URL or an offline machine is a normal outcome
+        # here, not a crash: say which and leave the last fetch on screen.
+        st.error(f"Fetch failed: {type(exc).__name__}: {exc}")
+    finally:
+        progress.empty()
+        store.close()
+
+
+def _size(n: int) -> str:
+    return f"{n / 1024:.0f} KB" if n < 1024 * 1024 else f"{n / 1048576:.1f} MB"
+
+
+def _tag_folder(folder: str) -> None:
+    """Tag a folder with the same pipeline the CLI runs.
+
+    `run_folder` rather than a loop written here, so the fetch route cannot
+    drift from `python -m cli tag`: same graph, same memory, same results row.
+    """
+    from agent.pipeline import run_folder
+    from tools import RESULTS_PATH, ResultStore
+
+    examples = None
+    if few_shot:
+        from agent.fewshot import load_examples
+        examples = load_examples(limit=few_shot)
+
+    run_id = _session_run()
+    store = ResultStore(RESULTS_PATH)
+    progress = st.progress(0.0, text="Tagging...")
+    try:
+        client = get_client()
+        stats = _session_stats(getattr(client, "model", ""))
+        results = run_folder(
+            folder, client, examples=examples,
+            memory=TagMemory() if use_memory else None, workers=4,
+            store=store, run_id=run_id, stats=stats,
+            on_item=lambda i, total, res: progress.progress(
+                i / total, text=f"Tagged {i} of {total}"))
+    except Exception as exc:
+        st.error(f"Tagging failed: {exc}")
+        return
+    finally:
+        progress.empty()
+        store.close()
+
+    st.success(f"Tagged {len(results)} image(s) from {folder}.")
+    _render_results(run_id, key="fetch")
+
+
 def _results_tab() -> None:
     """The content creator's view: the images this session tagged, as a table.
 
@@ -655,10 +822,12 @@ def _render_metrics(workflow: dict, caption: str) -> None:
         })
 
 
-tag_tab, results_tab, metrics_tab = st.tabs(
-    ["Tag images", "Results", "Metrics"])
+tag_tab, fetch_tab, results_tab, metrics_tab = st.tabs(
+    ["Tag images", "Fetch from Sony", "Results", "Metrics"])
 with tag_tab:
     _tagging_tab()
+with fetch_tab:
+    _fetch_tab()
 with results_tab:
     _results_tab()
 with metrics_tab:
